@@ -1,0 +1,155 @@
+"""
+flash_worker.py
+================
+FlashWorker runs entirely inside its own QThread and drives a single
+device's esptool subprocess to completion, emitting Qt signals that the
+controller/UI layer consume to update per-device progress bars, status
+badges, live console output, and timers.
+
+Each device gets exactly one FlashWorker instance per upload attempt —
+this is what gives us true parallel flashing: N devices == N QThreads,
+each with its own subprocess, so a slow/stuck device never blocks the
+others (and the GUI thread is never touched by blocking I/O).
+"""
+
+from __future__ import annotations
+
+import time
+
+from PySide6.QtCore import QThread, Signal
+
+from app.flash_engine.esptool_wrapper import (
+    FlashCommandBuilder,
+    FlashProcess,
+    parse_progress_line,
+)
+from app.logging_setup.logger import get_logger
+from app.models.device_model import DeviceConfig
+from app.utilities.constants import (
+    STATUS_CANCELLED,
+    STATUS_CONNECTING,
+    STATUS_COMPLETED,
+    STATUS_ERASING,
+    STATUS_FAILED,
+    STATUS_PREPARING,
+    STATUS_UPLOADING,
+    STATUS_VERIFYING,
+)
+
+logger = get_logger(__name__)
+
+
+class FlashWorker(QThread):
+    """
+    Signals
+    -------
+    status_changed(device_id, status_str)
+    progress_changed(device_id, percent, current_address)
+    speed_changed(device_id, kbps)
+    log_line(device_id, line_str)
+    finished_flash(device_id, success_bool, message_str, duration_seconds)
+    """
+
+    status_changed = Signal(str, str)
+    progress_changed = Signal(str, int, str)
+    speed_changed = Signal(str, float)
+    log_line = Signal(str, str)
+    finished_flash = Signal(str, bool, str, float)
+
+    def __init__(self, device: DeviceConfig, parent=None) -> None:
+        super().__init__(parent)
+        self.device = device
+        self._process: FlashProcess | None = None
+        self._cancel_requested = False
+        self._last_progress_bytes_time: float | None = None
+
+    # ------------------------------------------------------------------
+    def request_cancel(self) -> None:
+        """Thread-safe-ish cancel request; polled by run() and also used
+        to actively kill the running subprocess for immediate response."""
+        self._cancel_requested = True
+        if self._process is not None:
+            self._process.terminate()
+
+    # ------------------------------------------------------------------
+    def run(self) -> None:  # noqa: C901 - state machine is inherently branchy
+        device_id = self.device.id
+        start_time = time.monotonic()
+
+        try:
+            self.status_changed.emit(device_id, STATUS_PREPARING)
+            self.log_line.emit(device_id, f">>> Preparing to flash '{self.device.name}' on {self.device.com_port}")
+
+            command = FlashCommandBuilder.build_write_flash_args(self.device)
+            self.log_line.emit(device_id, ">>> Command: " + " ".join(command))
+
+            if self._cancel_requested:
+                self._finish(device_id, False, "Cancelled before start.", start_time)
+                return
+
+            self._process = FlashProcess(command)
+            self._process.start()
+
+            self.status_changed.emit(device_id, STATUS_CONNECTING)
+
+            saw_writing = False
+            for line in self._process.iter_lines():
+                if self._cancel_requested:
+                    break
+
+                self.log_line.emit(device_id, line)
+                event = parse_progress_line(line)
+
+                if event.kind == "erasing":
+                    self.status_changed.emit(device_id, STATUS_ERASING)
+                elif event.kind == "writing":
+                    if not saw_writing:
+                        self.status_changed.emit(device_id, STATUS_UPLOADING)
+                        saw_writing = True
+                    if event.percent is not None:
+                        self.progress_changed.emit(device_id, event.percent, event.address)
+                        self._update_speed(device_id, start_time)
+                elif event.kind == "verifying":
+                    self.status_changed.emit(device_id, STATUS_VERIFYING)
+
+            return_code = self._process.wait(timeout=10) if not self._cancel_requested else -9
+
+            if self._cancel_requested:
+                self._process.terminate()
+                self._finish(device_id, False, "Cancelled by user.", start_time)
+                return
+
+            if return_code == 0:
+                self.progress_changed.emit(device_id, 100, "")
+                self._finish(device_id, True, "Flash completed successfully.", start_time)
+            else:
+                self._finish(device_id, False, f"esptool exited with code {return_code}.", start_time)
+
+        except FileNotFoundError as exc:
+            logger.exception("esptool executable/module not found for device %s", self.device.name)
+            self.log_line.emit(device_id, f"ERROR: {exc}")
+            self._finish(device_id, False, "esptool could not be launched (is it installed?).", start_time)
+        except Exception as exc:  # noqa: BLE001 - worker must never crash the app
+            logger.exception("Unexpected error flashing device %s", self.device.name)
+            self.log_line.emit(device_id, f"ERROR: {exc}")
+            self._finish(device_id, False, f"Unexpected error: {exc}", start_time)
+
+    # ------------------------------------------------------------------
+    def _update_speed(self, device_id: str, start_time: float) -> None:
+        """Rough throughput estimate for the UI's 'transfer speed' column."""
+        elapsed = max(time.monotonic() - start_time, 0.001)
+        enabled = self.device.enabled_firmware()
+        total_bytes = sum(e.file_size for e in enabled)
+        if total_bytes <= 0:
+            return
+        kbps = (total_bytes / elapsed) / 1024.0
+        self.speed_changed.emit(device_id, kbps)
+
+    def _finish(self, device_id: str, success: bool, message: str, start_time: float) -> None:
+        duration = time.monotonic() - start_time
+        status = STATUS_COMPLETED if success else (
+            STATUS_CANCELLED if self._cancel_requested else STATUS_FAILED
+        )
+        self.status_changed.emit(device_id, status)
+        self.log_line.emit(device_id, f">>> {message} (elapsed {duration:.1f}s)")
+        self.finished_flash.emit(device_id, success, message, duration)

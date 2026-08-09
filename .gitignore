@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+
+# Virtual environments (this project uses .venv)
+.venv/
+venv/
+env/
+ENV/
+
+# ---------------------------------------------------------------------------
+# PyInstaller build output (see docs/BUILD_INSTRUCTIONS.md — never commit
+# platform-specific binaries; every user builds their own)
+# ---------------------------------------------------------------------------
+build/
+dist/
+*.spec
+
+# ---------------------------------------------------------------------------
+# Application runtime data (settings/logs/profiles live under the per-OS
+# app-data directory outside the repo — see app/utilities/helpers.py — but
+# ignore local scratch data if it's ever created next to the source tree)
+# ---------------------------------------------------------------------------
+logs/
+*.log
+
+# ---------------------------------------------------------------------------
+# OS junk files
+# ---------------------------------------------------------------------------
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ---------------------------------------------------------------------------
+# Editors / IDEs
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---------------------------------------------------------------------------
+# Project-specific
+# ---------------------------------------------------------------------------
+# Internal maintenance script — not part of the public deliverable
+repo_maintenance.py
+
+# User-created project files saved outside examples/ during local testing
+/*.efmproj

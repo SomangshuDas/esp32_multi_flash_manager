@@ -1,0 +1,158 @@
+{
+  "schema_version": "1.0.0",
+  "project_name": "Example Manufacturing Batch",
+  "devices": [
+    {
+      "id": "184df010-6f5f-4515-b624-d95e798fdda2",
+      "name": "Station 1 - RFID Reader",
+      "com_port": "COM5",
+      "chip_type": "esp32",
+      "baud_rate": 921600,
+      "flash_mode": "dio",
+      "flash_frequency": "40m",
+      "flash_size": "4MB",
+      "erase_before_upload": true,
+      "verify_flash": true,
+      "reset_after_upload": true,
+      "compression": true,
+      "stub_loader": true,
+      "custom_flash_args": "",
+      "firmware": [
+        {
+          "id": "b8cf15bb-5991-4da6-8596-469277a12de2",
+          "file_path": "examples/firmware/bootloader.bin",
+          "address": "0x1000",
+          "enabled": true,
+          "file_size": 24576,
+          "md5": "5c65ae66b72ed07bba39174eb31762ed"
+        },
+        {
+          "id": "cd3e3e8d-8471-4e8d-8a51-a0a8f8b2068b",
+          "file_path": "examples/firmware/partition-table.bin",
+          "address": "0x8000",
+          "enabled": true,
+          "file_size": 3072,
+          "md5": "988a096f6bee866b744ec2be0247ba9e"
+        },
+        {
+          "id": "e44aabb3-e0a4-4e09-be05-14ceeabcc1e8",
+          "file_path": "examples/firmware/boot_app0.bin",
+          "address": "0xe000",
+          "enabled": true,
+          "file_size": 8192,
+          "md5": "84d04c9d6cc8ef35bf825d51a5277699"
+        },
+        {
+          "id": "b4fc8739-71a4-49a5-abae-a3b4378ee87f",
+          "file_path": "examples/firmware/firmware.bin",
+          "address": "0x10000",
+          "enabled": true,
+          "file_size": 850000,
+          "md5": "2e8ae6a2932cc6c61bebeabe7accb38b"
+        }
+      ]
+    },
+    {
+      "id": "725493da-c5c8-4536-80af-842e2f24de2f",
+      "name": "Station 2 - RFID Reader",
+      "com_port": "COM6",
+      "chip_type": "esp32",
+      "baud_rate": 921600,
+      "flash_mode": "dio",
+      "flash_frequency": "40m",
+      "flash_size": "4MB",
+      "erase_before_upload": true,
+      "verify_flash": true,
+      "reset_after_upload": true,
+      "compression": true,
+      "stub_loader": true,
+      "custom_flash_args": "",
+      "firmware": [
+        {
+          "id": "0017f803-351f-4fcd-b12e-939be4f0b113",
+          "file_path": "examples/firmware/bootloader.bin",
+          "address": "0x1000",
+          "enabled": true,
+          "file_size": 24576,
+          "md5": "5c65ae66b72ed07bba39174eb31762ed"
+        },
+        {
+          "id": "df14086e-3585-4dd0-94d2-bd54d810360b",
+          "file_path": "examples/firmware/partition-table.bin",
+          "address": "0x8000",
+          "enabled": true,
+          "file_size": 3072,
+          "md5": "988a096f6bee866b744ec2be0247ba9e"
+        },
+        {
+          "id": "f363421b-03ee-4d85-a215-080e2568daa1",
+          "file_path": "examples/firmware/boot_app0.bin",
+          "address": "0xe000",
+          "enabled": true,
+          "file_size": 8192,
+          "md5": "84d04c9d6cc8ef35bf825d51a5277699"
+        },
+        {
+          "id": "81553823-745d-45a4-93fd-f03c1a250402",
+          "file_path": "examples/firmware/firmware.bin",
+          "address": "0x10000",
+          "enabled": true,
+          "file_size": 850000,
+          "md5": "2e8ae6a2932cc6c61bebeabe7accb38b"
+        }
+      ]
+    },
+    {
+      "id": "4fe67238-ac53-42b2-8099-148472d5904b",
+      "name": "Station 3 - Gateway",
+      "com_port": "COM7",
+      "chip_type": "esp32s3",
+      "baud_rate": 460800,
+      "flash_mode": "dio",
+      "flash_frequency": "40m",
+      "flash_size": "4MB",
+      "erase_before_upload": false,
+      "verify_flash": true,
+      "reset_after_upload": true,
+      "compression": true,
+      "stub_loader": true,
+      "custom_flash_args": "",
+      "firmware": [
+        {
+          "id": "45177c5e-f6db-4900-ace4-486cb51535f7",
+          "file_path": "examples/firmware/bootloader.bin",
+          "address": "0x1000",
+          "enabled": true,
+          "file_size": 24576,
+          "md5": "5c65ae66b72ed07bba39174eb31762ed"
+        },
+        {
+          "id": "21badb5b-8935-40c7-9576-5e9a803784a2",
+          "file_path": "examples/firmware/partition-table.bin",
+          "address": "0x8000",
+          "enabled": true,
+          "file_size": 3072,
+          "md5": "988a096f6bee866b744ec2be0247ba9e"
+        },
+        {
+          "id": "adeff55d-1780-4308-860f-e904ee5887a6",
+          "file_path": "examples/firmware/boot_app0.bin",
+          "address": "0xe000",
+          "enabled": true,
+          "file_size": 8192,
+          "md5": "84d04c9d6cc8ef35bf825d51a5277699"
+        },
+        {
+          "id": "c256e2ca-129d-4bae-ac8b-d4c38e04b873",
+          "file_path": "examples/firmware/firmware.bin",
+          "address": "0x10000",
+          "enabled": true,
+          "file_size": 850000,
+          "md5": "2e8ae6a2932cc6c61bebeabe7accb38b"
+        }
+      ]
+    }
+  ],
+  "window_geometry_b64": "",
+  "window_state_b64": ""
+}
