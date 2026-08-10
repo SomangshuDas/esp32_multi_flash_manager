@@ -122,7 +122,7 @@ jobs:
       - name: Validate Linux desktop entry / MIME definition
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y desktop-file-utils shared-mime-info
+          sudo apt-get install -y desktop-file-utils shared-mime-info libxml2-utils
           desktop-file-validate packaging/linux/esp32-multi-flash-manager.desktop
           xmllint --noout packaging/linux/esp32-multi-flash-manager-efmproj.xml
           xmllint --noout packaging/linux/esp32-multi-flash-manager.appdata.xml
