@@ -15,6 +15,12 @@ Or use the packaged standalone build if you've made one (see
 `ESP32MultiFlashManager.app` on macOS, or the `ESP32MultiFlashManager`
 binary on Linux.
 
+If you installed the app via one of the installers under `packaging/`
+(`Setup.exe` on Windows, the `.dmg` on macOS, or the `.AppImage` on
+Linux — see §10 for more) you can also just **double-click any `.efmproj`
+file**: the app launches directly with that project already loaded, no
+manual `File → Open Project` step needed.
+
 ## 2. The main window
 
 - **Top bar (Dashboard):** live counts of Total, Connected, Disconnected,
@@ -152,6 +158,21 @@ saved path (e.g. you moved the build folder), the project still loads —
 you'll get a warning dialog listing what's missing, and the affected rows
 are marked **Missing!** in red on the Firmware tab. Use **Add BIN...** to
 relink them.
+
+**Opening a project by double-clicking it.** If the app was installed via
+one of the OS installers built from `packaging/` (rather than run from
+source or a raw portable binary), `.efmproj` files are registered with the
+app:
+
+- **Windows:** double-click a `.efmproj` file in Explorer, or right-click →
+  Open With → ESP32 Multi Flash Manager.
+- **macOS:** double-click it in Finder, or drag it onto the app's Dock icon.
+- **Linux:** works once the AppImage is integrated with your desktop (e.g.
+  via `appimaged`/AppImageLauncher) — double-click from your file manager.
+
+Either way this launches the app with that project already open — the
+project on the command line is treated exactly like `File → Open Project`,
+including the same missing-firmware warning behavior above.
 
 ## 11. Searching devices
 

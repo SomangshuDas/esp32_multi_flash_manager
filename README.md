@@ -96,6 +96,25 @@ platform-specific setup step. See `docs/BUILD_INSTRUCTIONS.md` for
 packaging into a standalone executable on each OS, and
 `docs/USER_MANUAL.md` for a full walkthrough of the interface.
 
+Prefer not to run from source? Every
+[tagged release](https://github.com/SomangshuDas/esp32_multi_flash_manager/releases)
+ships an installer for each OS — built by the scripts in
+[`packaging/`](packaging) — alongside the raw portable binary:
+`Setup.exe` (Windows, via Inno Setup), a `.dmg` (macOS), and a `.AppImage`
+(Linux). Each installer also registers the **`.efmproj` project file
+extension** with the app, so double-clicking a project file opens it
+directly instead of requiring `File → Open Project` first.
+
+> **Installer testing status:**
+> - ✅ **Windows 10** — tested
+> - ⬜ **Linux** — not yet tested on real hardware/VM
+> - ⬜ **macOS** — not yet tested on real hardware (no Apple hardware
+>   available to the maintainer)
+>
+> If you install this on Linux or macOS and hit an issue, please
+> [open an issue](https://github.com/SomangshuDas/esp32_multi_flash_manager/issues)
+> or reach out — reports are very welcome.
+
 An example project is included at `examples/example_project.efmproj`,
 referencing dummy firmware in `examples/firmware/` — open it from
 **File → Open Project** to explore the UI immediately. (The dummy `.bin`
@@ -131,7 +150,10 @@ resources/
   themes/               Dark/light QSS stylesheets (also embedded in code)
 examples/               Example project + example firmware folder
 docs/                   User manual, developer docs, build instructions
-.github/workflows/      CI: cross-platform build + smoke test on every push
+packaging/               Installer scripts (Windows/.exe, macOS/.dmg,
+                          Linux/.AppImage) + .efmproj file association
+.github/workflows/      CI: cross-platform build + smoke test on every push,
+                          plus installer builds on tagged releases
 ```
 
 This follows a strict **MVC discipline**: models never import Qt or
@@ -162,8 +184,12 @@ Every push and pull request to `main` is built and smoke-tested on all
 three target platforms by
 [`.github/workflows/build.yml`](.github/workflows/build.yml)
 (`windows-latest`, `macos-latest`, `ubuntu-latest`), producing a
-downloadable PyInstaller build artifact for each OS. See
-`docs/BUILD_INSTRUCTIONS.md` §5 for details.
+downloadable PyInstaller build artifact for each OS. Pushing a `v*.*.*`
+tag additionally triggers
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which
+builds the installers under `packaging/` for all three OSes and attaches
+them to the GitHub Release. See `docs/BUILD_INSTRUCTIONS.md` §5 for
+details.
 
 ## License
 

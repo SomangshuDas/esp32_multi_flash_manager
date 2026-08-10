@@ -10,16 +10,65 @@ from __future__ import annotations
 
 import sys
 import traceback
+from pathlib import Path
 
+from PySide6.QtCore import QEvent
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.logging_setup.logger import configure_logging, get_logger
 from app.ui.main_window import MainWindow
-from app.utilities.constants import APP_NAME, ORG_NAME
+from app.utilities.constants import APP_NAME, ORG_NAME, PROJECT_FILE_EXTENSION
 from app.utilities.helpers import resource_path
 
 logger = get_logger(__name__)
+
+
+class ESPFlashApplication(QApplication):
+    """
+    QApplication subclass that also catches macOS "open with" / double-click
+    events. On Windows and Linux, a file association launch simply appends
+    the file path to argv (handled in main() below); macOS instead delivers
+    it as a QFileOpenEvent *after* the QApplication is constructed, which is
+    why this needs its own event() override rather than an argv check.
+    """
+
+    def __init__(self, argv: list[str]) -> None:
+        super().__init__(argv)
+        self.pending_open_path: str | None = None
+        self._main_window: MainWindow | None = None
+
+    def set_main_window(self, window: MainWindow) -> None:
+        self._main_window = window
+        if self.pending_open_path:
+            window.open_project_at_startup(self.pending_open_path)
+            self.pending_open_path = None
+
+    def event(self, event: QEvent) -> bool:  # noqa: N802 - Qt override
+        if event.type() == QEvent.Type.FileOpen:
+            file_path = event.file()
+            if self._main_window is not None:
+                self._main_window.open_project_at_startup(file_path)
+            else:
+                self.pending_open_path = file_path
+            return True
+        return super().event(event)
+
+
+def _project_path_from_argv(argv: list[str]) -> str | None:
+    """
+    Pick the first argv entry (after the script name) that looks like a
+    `.efmproj` path, ignoring flags like `--debug`. This covers the
+    Windows/Linux file-association case: the OS launches the frozen exe as
+    `ESP32MultiFlashManager.exe "C:\\path\\to\\project.efmproj"`.
+    """
+    for arg in argv[1:]:
+        if arg.startswith("-"):
+            continue
+        candidate = Path(arg)
+        if candidate.suffix.lstrip(".").lower() == PROJECT_FILE_EXTENSION:
+            return str(candidate)
+    return None
 
 
 def _load_app_icon() -> QIcon:
@@ -69,7 +118,7 @@ def main() -> int:
     log_dir = configure_logging(debug="--debug" in sys.argv)
     logger.info("Starting %s", APP_NAME)
 
-    app = QApplication(sys.argv)
+    app = ESPFlashApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName(ORG_NAME)
     app.setWindowIcon(_load_app_icon())
@@ -78,6 +127,11 @@ def main() -> int:
 
     window = MainWindow()
     window.show()
+    app.set_main_window(window)
+
+    startup_project = _project_path_from_argv(sys.argv)
+    if startup_project:
+        window.open_project_at_startup(startup_project)
 
     logger.info("Log directory: %s", log_dir)
     return app.exec()

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-efmproj">
+    <comment>ESP32 Multi Flash Manager Project</comment>
+    <glob pattern="*.efmproj"/>
+    <icon name="esp32-multi-flash-manager"/>
+    <sub-class-of type="application/json"/>
+  </mime-type>
+</mime-info>

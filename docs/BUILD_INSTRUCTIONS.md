@@ -10,6 +10,9 @@ The exact commands below are also run automatically on every push in
 [`.github/workflows/build.yml`](../.github/workflows/build.yml), which
 builds on `windows-latest`, `macos-latest`, and `ubuntu-latest` — that
 workflow is the source of truth if this document ever drifts from it.
+Tagged releases go further and produce an actual installer for each OS via
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) and
+the scripts in [`packaging/`](../packaging) — see §4 below.
 
 ---
 
@@ -163,35 +166,58 @@ sudo usermod -a -G dialout $USER
   first — this is what keeps the window icon working identically whether
   you run from source or from a frozen build, on any OS.
 
-## 4. Building an installer (optional)
+## 4. Building an installer
 
-- **Windows** — wrap the PyInstaller `.exe` with
-  [Inno Setup](https://jrsoftware.org/isinfo.php) or
-  [NSIS](https://nsis.sourceforge.io/) for a proper `Setup.exe` with Start
-  Menu shortcuts and an uninstaller:
+Real, tested scripts for this live under [`packaging/`](../packaging) —
+see [`packaging/README.md`](../packaging/README.md) for the full
+breakdown. They wrap the PyInstaller build above into a proper installer
+for each OS, and register the **`.efmproj` project file extension** with
+the app in the process, so double-clicking a project file in the file
+manager launches ESP32 Multi Flash Manager directly with that project
+loaded (see `app/main.py::_project_path_from_argv` and
+`ESPFlashApplication.event()` for how the app receives that path on each
+OS).
 
-  ```ini
-  [Setup]
-  AppName=ESP32 Multi Flash Manager
-  AppVersion=1.0.0
-  DefaultDirName={autopf}\ESP32MultiFlashManager
-  DefaultGroupName=ESP32 Multi Flash Manager
-  OutputBaseFilename=ESP32MultiFlashManagerSetup
-  Compression=lzma2
-  SolidCompression=yes
+- **Windows** —
+  [`packaging/windows/build_installer.ps1`](../packaging/windows/build_installer.ps1)
+  runs PyInstaller, then compiles
+  [`packaging/windows/installer.iss`](../packaging/windows/installer.iss)
+  with [Inno Setup 6](https://jrsoftware.org/isinfo.php) into
+  `dist/installer/ESP32MultiFlashManagerSetup-<version>.exe` — a Setup.exe
+  with Start Menu/Desktop shortcuts, an uninstaller, and an opt-out
+  `.efmproj` file association written to `HKCU\Software\Classes`.
 
-  [Files]
-  Source: "dist\ESP32MultiFlashManager.exe"; DestDir: "{app}"; Flags: ignoreversion
-
-  [Icons]
-  Name: "{group}\ESP32 Multi Flash Manager"; Filename: "{app}\ESP32MultiFlashManager.exe"
+  ```powershell
+  .\packaging\windows\build_installer.ps1 -Version 1.0.0
   ```
 
-- **macOS** — distribute the `.app` bundle directly, or wrap it in a `.dmg`
-  with `hdiutil create` for a drag-to-Applications installer experience.
-- **Linux** — distribute the single binary plus the `.desktop` file above,
-  or package as an AppImage if you want a fully self-contained,
-  distro-agnostic artifact.
+- **macOS** —
+  [`packaging/macos/build_dmg.sh`](../packaging/macos/build_dmg.sh) builds
+  `.app` via
+  [`packaging/macos/ESP32MultiFlashManager.spec`](../packaging/macos/ESP32MultiFlashManager.spec)
+  (which declares `CFBundleDocumentTypes`/`UTExportedTypeDeclarations` for
+  `.efmproj` in `Info.plist`), generating `app_icon.icns` first via
+  [`packaging/macos/make_icns.sh`](../packaging/macos/make_icns.sh) if it
+  doesn't already exist, then packages a drag-to-Applications
+  `dist/installer/ESP32MultiFlashManager-<version>.dmg`.
+
+  ```bash
+  packaging/macos/build_dmg.sh 1.0.0
+  ```
+
+- **Linux** —
+  [`packaging/linux/build_appimage.sh`](../packaging/linux/build_appimage.sh)
+  builds the onefile binary, assembles an AppDir with the bundled
+  [`.desktop`](../packaging/linux/esp32-multi-flash-manager.desktop) entry
+  (`MimeType=application/x-efmproj;`) and
+  [shared-mime-info XML](../packaging/linux/esp32-multi-flash-manager-efmproj.xml),
+  and wraps it into
+  `dist/installer/ESP32MultiFlashManager-<version>-<arch>.AppImage` with
+  `appimagetool` (downloaded automatically if not already on `PATH`).
+
+  ```bash
+  packaging/linux/build_appimage.sh 1.0.0
+  ```
 
 ## 5. Continuous Integration
 
@@ -212,7 +238,19 @@ every push and pull request to `main` (and can be triggered manually via
 
 This means every commit gets an actual cross-platform build verification,
 not just a "should work on Linux/macOS" assumption — a build that fails on
-Windows or macOS fails CI, the same as a failing build on Linux would.
+Windows or macOS fails CI, the same as a failing build on Linux would. On
+Linux it additionally validates the packaging `.desktop` entry and MIME XML
+with `desktop-file-validate`/`xmllint`, so a typo there fails CI too instead
+of only surfacing when someone tries to cut a release.
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) runs
+whenever a `v*.*.*` tag is pushed. For each OS it does the raw PyInstaller
+build above (as before), then also runs that OS's `packaging/` script and
+attaches **both** the raw executable/bundle *and* the installer
+(`Setup.exe` / `.dmg` / `.AppImage`) to the GitHub Release, so users who
+just want a portable binary and users who want proper OS integration
+(Start Menu entry, `.efmproj` file association, uninstaller, etc.) both
+get what they need from the same release.
 
 ## 6. Verifying a build manually
 

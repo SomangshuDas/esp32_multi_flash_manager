@@ -1,8 +1,12 @@
-name: Build & Smoke Test
+name: Setup & Build Verification
 
 # Runs the same checks and PyInstaller build commands documented in
 # docs/BUILD_INSTRUCTIONS.md, on Windows, macOS, and Linux, so a broken
 # cross-platform build is caught in CI instead of on someone's machine.
+# This is the "does a clean environment even build the app" workflow that
+# runs on every push/PR; packaging/*.iss/.spec/.desktop assets used to cut
+# an actual installer are exercised separately by release.yml when a
+# version tag is pushed (see packaging/README.md).
 
 on:
   push:
@@ -114,3 +118,11 @@ jobs:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.dist_path }}
           if-no-files-found: error
+
+      - name: Validate Linux desktop entry / MIME definition
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y desktop-file-utils shared-mime-info
+          desktop-file-validate packaging/linux/esp32-multi-flash-manager.desktop
+          xmllint --noout packaging/linux/esp32-multi-flash-manager-efmproj.xml
+          xmllint --noout packaging/linux/esp32-multi-flash-manager.appdata.xml

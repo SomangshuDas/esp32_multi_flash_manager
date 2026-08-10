@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.somangshudas.esp32multiflashmanager</id>
+  <name>ESP32 Multi Flash Manager</name>
+  <summary>Parallel ESP32 firmware flashing for manufacturing and lab benches</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <developer_name>Somangshu Das</developer_name>
+  <url type="homepage">https://github.com/SomangshuDas/esp32_multi_flash_manager</url>
+  <url type="bugtracker">https://github.com/SomangshuDas/esp32_multi_flash_manager/issues</url>
+  <description>
+    <p>
+      ESP32 Multi Flash Manager is a desktop tool for flashing firmware to
+      many ESP32 boards in parallel, built around esptool. It supports
+      per-device configuration, live flashing progress and logs, firmware
+      profiles, reusable projects (.efmproj), flash history, and batch
+      editing of device settings.
+    </p>
+  </description>
+  <launchable type="desktop-id">esp32-multi-flash-manager.desktop</launchable>
+  <provides>
+    <mediatype>application/x-efmproj</mediatype>
+  </provides>
+  <releases>
+    <release version="1.0.0" date="2026-08-10"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

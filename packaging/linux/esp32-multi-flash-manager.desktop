@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=ESP32 Multi Flash Manager
+GenericName=ESP32 Firmware Flasher
+Comment=Parallel ESP32 firmware flashing for manufacturing and lab benches
+Keywords=ESP32;esptool;firmware;flash;flasher;serial;embedded;
+Exec=ESP32MultiFlashManager %f
+Icon=esp32-multi-flash-manager
+Categories=Development;Electronics;Engineering;
+Terminal=false
+MimeType=application/x-efmproj;
+StartupWMClass=ESP32MultiFlashManager
+StartupNotify=true

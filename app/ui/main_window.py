@@ -438,6 +438,18 @@ class MainWindow(QMainWindow):
             return
         self.project_controller.open_project(file_path)
 
+    def open_project_at_startup(self, file_path: str) -> None:
+        """
+        Open `file_path` right after the window is constructed, bypassing the
+        unsaved-changes prompt (there is nothing to discard yet). Used when the
+        app is launched by double-clicking a .efmproj file — either passed as
+        a command-line argument (Windows/Linux file association) or delivered
+        via a macOS QFileOpenEvent. Any failure is reported the same way a
+        manual File -> Open would report it, never a silent no-op.
+        """
+        logger.info("Opening project from startup file association: %s", file_path)
+        self.project_controller.open_project(file_path)
+
     def _on_save_project(self) -> None:
         if self.project_controller.current_file_path is None:
             self._on_save_project_as()
