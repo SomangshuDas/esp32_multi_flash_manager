@@ -125,4 +125,4 @@ jobs:
           sudo apt-get install -y desktop-file-utils shared-mime-info libxml2-utils
           desktop-file-validate packaging/linux/esp32-multi-flash-manager.desktop
           xmllint --noout packaging/linux/esp32-multi-flash-manager-efmproj.xml
-          xmllint --noout packaging/linux/esp32-multi-flash-manager.appdata.xml
+          xmllint --noout packaging/linux/com.somangshudas.esp32multiflashmanager.appdata.xml
