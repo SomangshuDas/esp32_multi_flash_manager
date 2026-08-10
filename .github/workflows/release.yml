@@ -115,11 +115,11 @@ jobs:
 
       - name: Build installer (macOS)
         if: runner.os == 'macOS'
-        run: ./packaging/macos/build_dmg.sh "${{ steps.version.outputs.version }}"
+        run: bash packaging/macos/build_dmg.sh "${{ steps.version.outputs.version }}"
 
       - name: Build installer (Linux)
         if: runner.os == 'Linux'
-        run: ./packaging/linux/build_appimage.sh "${{ steps.version.outputs.version }}"
+        run: bash packaging/linux/build_appimage.sh "${{ steps.version.outputs.version }}"
 
       - name: Upload raw build asset to GitHub Release
         uses: softprops/action-gh-release@v2
