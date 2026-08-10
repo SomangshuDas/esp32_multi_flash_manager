@@ -77,8 +77,13 @@ if [[ -z "$APPIMAGETOOL" ]]; then
     echo "==> Downloading appimagetool"
     TOOL_PATH="dist/appimagetool-${ARCH}.AppImage"
     curl -L -o "$TOOL_PATH" \
-        "https://github.com/AppImage/AppImageKit/releases/latest/download/appimagetool-${ARCH}.AppImage"
+        "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-${ARCH}.AppImage"
     chmod +x "$TOOL_PATH"
+    if ! file "$TOOL_PATH" | grep -qi 'ELF\|executable'; then
+        echo "Downloaded file doesn't look like a real appimagetool binary:" >&2
+        head -c 200 "$TOOL_PATH" >&2
+        exit 1
+    fi
     APPIMAGETOOL="$TOOL_PATH"
 fi
 

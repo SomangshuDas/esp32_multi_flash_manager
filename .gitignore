@@ -25,6 +25,7 @@ ENV/
 build/
 dist/
 *.spec
+!packaging/macos/ESP32MultiFlashManager.spec
 
 # ---------------------------------------------------------------------------
 # Application runtime data (settings/logs/profiles live under the per-OS
