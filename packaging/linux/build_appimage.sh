@@ -92,7 +92,12 @@ mkdir -p "$OUT_DIR"
 OUT_PATH="$OUT_DIR/ESP32MultiFlashManager-${VERSION}-${ARCH}.AppImage"
 
 echo "==> Building AppImage"
-ARCH="$ARCH" "$APPIMAGETOOL" "$APPDIR" "$OUT_PATH"
+# appimagetool is itself distributed as an AppImage, so running it needs
+# FUSE to mount itself. CI runners (and some desktop distros) don't ship
+# libfuse2 by default, which fails with "dlopen(): error loading
+# libfuse.so.2". APPIMAGE_EXTRACT_AND_RUN makes it extract-and-run instead
+# of mounting, which works with no FUSE dependency at all.
+APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$ARCH" "$APPIMAGETOOL" "$APPDIR" "$OUT_PATH"
 
 echo "==> AppImage ready: $OUT_PATH"
 echo "    (.efmproj association registers once the AppImage is integrated"

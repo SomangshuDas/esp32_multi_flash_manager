@@ -27,27 +27,31 @@ repo_root = Path(SPECPATH).resolve().parent.parent
 # instead of silently staying at a hardcoded default.
 app_version = os.environ.get("APP_VERSION", "1.0.0")
 
+# Equivalent of --collect-all esptool on the CLI: pull in esptool's data
+# files (stub loaders etc.) that static analysis alone would miss.
+# NOTE: these must be passed into Analysis() below, not appended to
+# a.datas/a.binaries/a.hiddenimports afterward. collect_all() returns raw,
+# un-normalized (src, dest) tuples, while a.datas etc. are already
+# normalized to 3-item (dest, src, typecode) TOC entries once Analysis()
+# runs. Mixing the two shapes in one list makes PyInstaller's internal
+# normalize_toc() crash with "not enough values to unpack (expected 3,
+# got 2)" during the later build stages.
+from PyInstaller.utils.hooks import collect_all
+
+esptool_datas, esptool_binaries, esptool_hiddenimports = collect_all("esptool")
+
 a = Analysis(
     [str(repo_root / "run.py")],
     pathex=[str(repo_root)],
-    binaries=[],
-    datas=[(str(repo_root / "resources"), "resources")],
-    hiddenimports=[],
+    binaries=esptool_binaries,
+    datas=[(str(repo_root / "resources"), "resources")] + esptool_datas,
+    hiddenimports=esptool_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[],
     noarchive=False,
 )
-
-# Equivalent of --collect-all esptool on the CLI: pull in esptool's data
-# files (stub loaders etc.) that static analysis alone would miss.
-from PyInstaller.utils.hooks import collect_all
-
-esptool_datas, esptool_binaries, esptool_hiddenimports = collect_all("esptool")
-a.datas += esptool_datas
-a.binaries += esptool_binaries
-a.hiddenimports += esptool_hiddenimports
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
