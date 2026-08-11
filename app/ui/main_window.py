@@ -18,13 +18,17 @@ wiring + user interaction.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QSettings, QByteArray
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
     QFileDialog,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
@@ -53,8 +57,14 @@ from app.ui.profile_dialog import ProfileDialog
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.theme import stylesheet_for
 from app.ui.validation_dialog import ValidationReportDialog
-from app.utilities.constants import APP_NAME, APP_VERSION, ORG_NAME, PROJECT_FILE_FILTER
-from app.utilities.helpers import resource_path
+from app.utilities.constants import (
+    APP_NAME,
+    APP_VERSION,
+    LIVE_LOG_MAX_LINES,
+    ORG_NAME,
+    PROJECT_FILE_FILTER,
+)
+from app.utilities.helpers import resource_path, safe_filename
 from app.workers.port_watcher import PortWatcher
 
 logger = get_logger(__name__)
@@ -76,7 +86,9 @@ class MainWindow(QMainWindow):
         self.port_watcher = PortWatcher(self)
 
         self._live_consoles: dict[str, LiveConsoleWidget] = {}
+        self._device_log_buffers: dict[str, list[str]] = {}
         self._connected_ports: set[str] = set()
+        self._had_saved_geometry = False
 
         self._build_ui()
         self._build_menus_and_toolbar()
@@ -139,8 +151,11 @@ class MainWindow(QMainWindow):
         file_menu = menu_bar.addMenu("&File")
         self._add_action(file_menu, "&New Project", "Ctrl+N", self._on_new_project)
         self._add_action(file_menu, "&Open Project...", "Ctrl+O", self._on_open_project)
+        file_menu.addSeparator()
         self._add_action(file_menu, "&Save Project", "Ctrl+S", self._on_save_project)
         self._add_action(file_menu, "Save Project &As...", "Ctrl+Shift+S", self._on_save_project_as)
+        self._add_action(file_menu, "Rena&me Project...", "", self._on_rename_project)
+        file_menu.addSeparator()
         self.recent_menu = file_menu.addMenu("Recent Projects")
         self._refresh_recent_menu()
         file_menu.addSeparator()
@@ -218,7 +233,7 @@ class MainWindow(QMainWindow):
 
         # Flash controller -> device panel + history
         self.flash_controller.device_status_changed.connect(self._on_status_changed)
-        self.flash_controller.device_progress_changed.connect(self.device_panel.set_progress)
+        self.flash_controller.device_progress_changed.connect(self._on_device_progress)
         self.flash_controller.device_speed_changed.connect(self.device_panel.set_speed)
         self.flash_controller.device_log_line.connect(self._on_log_line)
         self.flash_controller.batch_finished.connect(self._on_batch_finished)
@@ -354,6 +369,17 @@ class MainWindow(QMainWindow):
 
         for device in devices:
             self.device_panel.reset_progress(device.id)
+            self._device_log_buffers[device.id] = []
+            console = self._live_consoles.get(device.id)
+            if console is not None:
+                # Only reset an already-open console (the user opened it
+                # themselves at some point); never open a new one here.
+                # Progress is shown per-device in the main table by default
+                # so non-technical users aren't confronted with extra
+                # console windows they didn't ask for. "View Log" on a row
+                # still opens/reuses a console on demand, fully populated
+                # via the buffered history below.
+                console.start_new_run()
 
         self.overall_progress.setValue(0)
         self.status_label.setText(f"Uploading {len(devices)} device(s)...")
@@ -387,9 +413,25 @@ class MainWindow(QMainWindow):
         device = self.device_controller.get_device(device_id)
         if device:
             device.runtime.status = status
+        console = self._live_consoles.get(device_id)
+        if console is not None:
+            console.set_status(status)
         self._refresh_dashboard()
 
+    def _on_device_progress(self, device_id: str, percent: int, address: str) -> None:
+        self.device_panel.set_progress(device_id, percent, address)
+        console = self._live_consoles.get(device_id)
+        if console is not None:
+            console.set_progress(percent, address)
+
     def _on_log_line(self, device_id: str, line: str) -> None:
+        # Buffer every line regardless of whether the live console window is
+        # currently open, so opening it later (or re-opening after it was
+        # closed) always replays full history instead of appearing blank.
+        buffer = self._device_log_buffers.setdefault(device_id, [])
+        buffer.append(line)
+        if len(buffer) > LIVE_LOG_MAX_LINES:
+            del buffer[: len(buffer) - LIVE_LOG_MAX_LINES]
         console = self._live_consoles.get(device_id)
         if console is not None:
             console.append_line(line)
@@ -400,16 +442,29 @@ class MainWindow(QMainWindow):
         self._refresh_dashboard()
 
     def _on_view_log(self, device_id: str) -> None:
+        self._open_live_console(device_id, focus=True)
+
+    def _open_live_console(self, device_id: str, focus: bool = True) -> LiveConsoleWidget | None:
+        """
+        Get-or-create the live console for `device_id`, replaying any
+        buffered log lines and current status/progress so it never opens
+        blank — even if flashing already started before the window existed.
+        """
         device = self.device_controller.get_device(device_id)
         if device is None:
-            return
+            return None
         console = self._live_consoles.get(device_id)
         if console is None:
             console = LiveConsoleWidget(device.name)
+            for line in self._device_log_buffers.get(device_id, []):
+                console.append_line(line)
+            console.set_status(device.runtime.status)
             self._live_consoles[device_id] = console
         console.show()
-        console.raise_()
-        console.activateWindow()
+        if focus:
+            console.raise_()
+            console.activateWindow()
+        return console
 
     # ------------------------------------------------------------------
     # Project lifecycle
@@ -433,7 +488,10 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard_changes():
             return
         if not file_path:
-            file_path, _ = QFileDialog.getOpenFileName(self, "Open Project", "", PROJECT_FILE_FILTER)
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Open Project", "", PROJECT_FILE_FILTER,
+                options=QFileDialog.Option.DontUseNativeDialog,
+            )
         if not file_path:
             return
         self.project_controller.open_project(file_path)
@@ -457,9 +515,37 @@ class MainWindow(QMainWindow):
         self.project_controller.save_project()
 
     def _on_save_project_as(self) -> None:
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Project As", "project.efmproj", PROJECT_FILE_FILTER)
-        if file_path:
-            self.project_controller.save_project(file_path)
+        project = self.project_controller.project
+        default_stem = safe_filename(project.project_name) if project.project_name else "project"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Project As", f"{default_stem}.efmproj", PROJECT_FILE_FILTER,
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
+        if not file_path:
+            return
+
+        # Let the user set a custom project name alongside the file name,
+        # pre-filled from the chosen file so "Untitled Project" never
+        # silently sticks around after a Save As.
+        suggested_name = Path(file_path).stem
+        name, ok = QInputDialog.getText(
+            self, "Project Name", "Project name:", QLineEdit.EchoMode.Normal, suggested_name,
+        )
+        project.project_name = name.strip() if ok and name.strip() else suggested_name
+
+        self.project_controller.save_project(file_path)
+
+    def _on_rename_project(self) -> None:
+        project = self.project_controller.project
+        name, ok = QInputDialog.getText(
+            self, "Rename Project", "Project name:", QLineEdit.EchoMode.Normal, project.project_name,
+        )
+        if not ok or not name.strip():
+            return
+        project.project_name = name.strip()
+        self.project_controller.mark_dirty()
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION} — {project.project_name}")
+        self.statusBar().showMessage("Project renamed.", 3000)
 
     def _on_project_loaded(self, project) -> None:
         self.device_controller.set_project(project)
@@ -567,8 +653,21 @@ class MainWindow(QMainWindow):
         state = self.settings.value("window_state")
         if isinstance(geometry, QByteArray):
             self.restoreGeometry(geometry)
+            self._had_saved_geometry = True
         if isinstance(state, QByteArray):
             self.restoreState(state)
+
+    def show_startup(self) -> None:
+        """
+        Show the main window at application startup. First-ever launch (no
+        saved geometry yet) opens maximized so the app fills the screen by
+        default; once the user has resized/moved it, their saved layout is
+        respected on subsequent launches instead of forcing maximize again.
+        """
+        if self._had_saved_geometry:
+            self.show()
+        else:
+            self.showMaximized()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         if self.flash_controller.any_busy():

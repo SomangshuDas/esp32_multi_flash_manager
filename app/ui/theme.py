@@ -31,7 +31,12 @@ QStatusBar { background-color: #26272b; }
 QMenuBar { background-color: #26272b; }
 QMenuBar::item:selected { background-color: #3a3c42; }
 QMenu { background-color: #2a2b30; border: 1px solid #3a3c42; }
+QMenu::item {
+    padding: 6px 32px 6px 24px;
+    min-width: 220px;
+}
 QMenu::item:selected { background-color: #3a6df0; }
+QMenu::separator { height: 1px; background: #3a3c42; margin: 4px 8px; }
 
 QGroupBox {
     border: 1px solid #3a3c42;
@@ -124,7 +129,12 @@ QStatusBar { background-color: #ffffff; }
 QMenuBar { background-color: #ffffff; }
 QMenuBar::item:selected { background-color: #e4e8f5; }
 QMenu { background-color: #ffffff; border: 1px solid #d5d8dd; }
+QMenu::item {
+    padding: 6px 32px 6px 24px;
+    min-width: 220px;
+}
 QMenu::item:selected { background-color: #3a6df0; color: white; }
+QMenu::separator { height: 1px; background: #d5d8dd; margin: 4px 8px; }
 
 QGroupBox {
     border: 1px solid #d5d8dd;

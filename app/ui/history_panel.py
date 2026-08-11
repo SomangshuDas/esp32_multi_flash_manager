@@ -60,7 +60,10 @@ class HistoryPanel(QWidget):
         if not self._entries:
             QMessageBox.information(self, "Export CSV", "There is no history to export yet.")
             return
-        path, _ = QFileDialog.getSaveFileName(self, "Export History", "flash_history.csv", "CSV Files (*.csv)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export History", "flash_history.csv", "CSV Files (*.csv)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if not path:
             return
         try:

@@ -31,6 +31,7 @@ from typing import Iterator
 
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
+from app.utilities.constants import ESPTOOL_REEXEC_FLAG
 
 logger = get_logger(__name__)
 
@@ -75,6 +76,27 @@ def parse_progress_line(line: str) -> ProgressEvent:
     return ProgressEvent(kind="raw", raw_line=line)
 
 
+def _esptool_command_prefix() -> list[str]:
+    """
+    Base argv used to launch esptool as a subprocess.
+
+    Running from source: `sys.executable` is a real Python interpreter, so
+    `-m esptool` works exactly as expected.
+
+    Running as a frozen PyInstaller build: `sys.executable` is this app's
+    OWN .exe, not a Python interpreter -- there is nothing on the target
+    machine to run `-m esptool` with. esptool is instead bundled directly
+    into the exe, so we re-invoke this same exe with a hidden internal flag
+    that main.py intercepts to run esptool's CLI in-process and exit,
+    rather than launching a second copy of the GUI (which is what silently
+    happened before this fix: Upload would open a second blank app window
+    instead of ever actually flashing).
+    """
+    if getattr(sys, "frozen", False):
+        return [sys.executable, ESPTOOL_REEXEC_FLAG]
+    return [sys.executable, "-m", "esptool"]
+
+
 class FlashCommandBuilder:
     """Builds the exact `esptool` CLI argument list for a given device."""
 
@@ -84,7 +106,7 @@ class FlashCommandBuilder:
         Build the full command line (as a list, suitable for subprocess.Popen)
         to flash every ENABLED firmware entry on `device`.
         """
-        args: list[str] = [sys.executable, "-m", "esptool"]
+        args: list[str] = _esptool_command_prefix()
 
         if device.chip_type and device.chip_type != "auto":
             args += ["--chip", device.chip_type]
@@ -128,7 +150,7 @@ class FlashCommandBuilder:
     @staticmethod
     def build_erase_flash_args(device: DeviceConfig) -> list[str]:
         """Build a command line to fully erase the chip's flash (no writing)."""
-        args: list[str] = [sys.executable, "-m", "esptool"]
+        args: list[str] = _esptool_command_prefix()
         if device.chip_type and device.chip_type != "auto":
             args += ["--chip", device.chip_type]
         args += ["--port", device.com_port, "--baud", str(device.baud_rate), "erase_flash"]
@@ -137,7 +159,7 @@ class FlashCommandBuilder:
     @staticmethod
     def build_chip_id_args(device: DeviceConfig) -> list[str]:
         """Build a lightweight command used to probe/identify a connected chip."""
-        args: list[str] = [sys.executable, "-m", "esptool"]
+        args: list[str] = _esptool_command_prefix()
         if device.chip_type and device.chip_type != "auto":
             args += ["--chip", device.chip_type]
         args += ["--port", device.com_port, "--baud", str(device.baud_rate), "chip_id"]

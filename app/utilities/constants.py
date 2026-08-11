@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "1.0.0"
+APP_VERSION = "0.3.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -96,6 +96,20 @@ ACTIVE_STATUSES = {
 PROJECT_FILE_EXTENSION = "efmproj"
 PROJECT_FILE_FILTER = "ESP32 Multi Flash Manager Project (*.efmproj)"
 FIRMWARE_FILE_FILTER = "Firmware Binary (*.bin)"
+
+# --------------------------------------------------------------------------
+# Internal flag used to re-invoke this same executable as an esptool runner.
+#
+# esptool is launched as a subprocess via `sys.executable`. When running
+# from source that's a real Python interpreter, so `-m esptool` works. But
+# in a PyInstaller --onefile build, `sys.executable` IS this app's own .exe
+# -- there is no separate Python on the target machine. main.py intercepts
+# this flag at startup: if present, it runs esptool's CLI directly (esptool
+# is bundled in via `--collect-all esptool`) and exits immediately instead
+# of opening the GUI. Without this, a frozen build's "Upload" would instead
+# relaunch a second blank instance of the app and never actually flash.
+# --------------------------------------------------------------------------
+ESPTOOL_REEXEC_FLAG = "--_run-esptool"
 
 # --------------------------------------------------------------------------
 # Misc UI constants

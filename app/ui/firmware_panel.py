@@ -199,7 +199,10 @@ class FirmwarePanel(QWidget):
     def _add_bin(self) -> None:
         if self._device is None:
             return
-        paths, _ = QFileDialog.getOpenFileNames(self, "Select Firmware BIN File(s)", "", FIRMWARE_FILE_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Select Firmware BIN File(s)", "", FIRMWARE_FILE_FILTER,
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         for path in paths:
             entry = FirmwareEntry(file_path=path, address="0x10000")
             entry.refresh()
@@ -241,7 +244,10 @@ class FirmwarePanel(QWidget):
     def _import_folder(self) -> None:
         if self._device is None:
             return
-        folder = QFileDialog.getExistingDirectory(self, "Select Firmware Folder")
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Firmware Folder", "",
+            QFileDialog.Option.DontUseNativeDialog | QFileDialog.Option.ShowDirsOnly,
+        )
         if not folder:
             return
         entries = scan_firmware_folder(folder)

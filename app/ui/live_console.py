@@ -15,15 +15,17 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
-from app.utilities.constants import LIVE_LOG_MAX_LINES
+from app.utilities.constants import LIVE_LOG_MAX_LINES, STATUS_COLORS, STATUS_WAITING
 from app.utilities.helpers import safe_filename, timestamp_now
 
 
@@ -44,6 +46,17 @@ class LiveConsoleWidget(QWidget):
         self.resize(800, 500)
 
         layout = QVBoxLayout(self)
+
+        status_row = QHBoxLayout()
+        self.status_label = QLabel(STATUS_WAITING)
+        self.status_label.setStyleSheet(f"font-weight: 600; color: {STATUS_COLORS.get(STATUS_WAITING, '#8a8f98')};")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("Waiting to start...")
+        status_row.addWidget(self.status_label)
+        status_row.addWidget(self.progress_bar, 1)
+        layout.addLayout(status_row)
 
         toolbar = QHBoxLayout()
         self.search_box = QLineEdit()
@@ -73,6 +86,30 @@ class LiveConsoleWidget(QWidget):
         self.text_edit.setMaximumBlockCount(LIVE_LOG_MAX_LINES)
         self.text_edit.setStyleSheet("font-family: Consolas, 'Courier New', monospace; font-size: 12px;")
         layout.addWidget(self.text_edit, 1)
+
+    # ------------------------------------------------------------------
+    def set_status(self, status: str) -> None:
+        """Update the status pill shown above the progress bar in real time."""
+        self.status_label.setText(status)
+        color = STATUS_COLORS.get(status, "#8a8f98")
+        self.status_label.setStyleSheet(f"font-weight: 600; color: {color};")
+
+    def set_progress(self, percent: int, address: str) -> None:
+        """Update the real-time upload progress bar for this device."""
+        self.progress_bar.setValue(max(0, min(100, percent)))
+        self.progress_bar.setFormat(f"%p% — {address}" if address else "%p%")
+
+    def start_new_run(self) -> None:
+        """Reset the console (log, progress, status) for a fresh upload attempt,
+        keeping the window itself open so the user doesn't lose their place."""
+        self._pending_lines.clear()
+        self._paused = False
+        self.pause_button.setText("Pause")
+        self.text_edit.clear()
+        self._line_count = 0
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("Waiting to start...")
+        self.set_status(STATUS_WAITING)
 
     # ------------------------------------------------------------------
     def append_line(self, line: str) -> None:
@@ -120,7 +157,10 @@ class LiveConsoleWidget(QWidget):
 
     def _save_log(self) -> None:
         default_name = f"{safe_filename(self.device_name)}_{timestamp_now().replace(':', '-').replace(' ', '_')}.log"
-        path, _ = QFileDialog.getSaveFileName(self, "Save Log", default_name, "Log Files (*.log);;Text Files (*.txt)")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Log", default_name, "Log Files (*.log);;Text Files (*.txt)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
         if not path:
             return
         try:
