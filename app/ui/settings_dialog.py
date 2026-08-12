@@ -3,19 +3,21 @@ settings_dialog.py
 ===================
 Application-wide preferences: theme (dark/light), default baud rate,
 default flash mode, and a shortcut to open the logs folder. Persisted
-via QSettings so they survive across launches.
+via AppSettings (settings.json under the roaming app-data folder) so
+they survive across launches without touching the Windows registry.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QPushButton, QVBoxLayout,
 )
 
 from app.logging_setup.logger import configure_logging
-from app.utilities.constants import APP_NAME, BAUD_RATES, FLASH_MODES, ORG_NAME
+from app.utilities.app_settings import get_settings
+from app.utilities.constants import BAUD_RATES, DEFAULT_BAUD, DEFAULT_FLASH_MODE, FLASH_MODES
 
 
 class SettingsDialog(QDialog):
@@ -23,7 +25,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.resize(380, 220)
-        self.settings = QSettings(ORG_NAME, APP_NAME)
+        self.settings = get_settings()
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
@@ -35,12 +37,12 @@ class SettingsDialog(QDialog):
 
         self.baud_combo = QComboBox()
         self.baud_combo.addItems([str(b) for b in BAUD_RATES])
-        self.baud_combo.setCurrentText(str(self.settings.value("default_baud", 921600)))
+        self.baud_combo.setCurrentText(str(self.settings.value("default_baud", DEFAULT_BAUD)))
         form.addRow("Default Baud Rate:", self.baud_combo)
 
         self.flash_mode_combo = QComboBox()
         self.flash_mode_combo.addItems(FLASH_MODES)
-        self.flash_mode_combo.setCurrentText(self.settings.value("default_flash_mode", "dio"))
+        self.flash_mode_combo.setCurrentText(self.settings.value("default_flash_mode", DEFAULT_FLASH_MODE))
         form.addRow("Default Flash Mode:", self.flash_mode_combo)
 
         layout.addLayout(form)

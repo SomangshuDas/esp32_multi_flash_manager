@@ -52,7 +52,7 @@ cp "$SCRIPT_DIR/esp32-multi-flash-manager-efmproj.xml" "$APPDIR/usr/share/mime/p
 sed "s/version=\"1.0.0\"/version=\"$VERSION\"/" \
     "$SCRIPT_DIR/com.somangshudas.esp32multiflashmanager.appdata.xml" \
     > "$APPDIR/usr/share/metainfo/com.somangshudas.esp32multiflashmanager.appdata.xml"
-cp "$REPO_ROOT/README.md" "$APPDIR/usr/share/doc/esp32-multi-flash-manager/README.md"
+cp "$REPO_ROOT/README.md" "$APPDIR/usr/share/doc/esp32-multi-flash-manager/README.txt"
 cp "$REPO_ROOT/LICENSE" "$APPDIR/usr/share/doc/esp32-multi-flash-manager/LICENSE"
 
 ICON_PNG="$APPDIR/usr/share/icons/hicolor/256x256/apps/esp32-multi-flash-manager.png"

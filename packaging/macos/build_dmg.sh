@@ -37,7 +37,7 @@ echo "==> Staging DMG contents"
 STAGING_DIR="$(mktemp -d)/dmg"
 mkdir -p "$STAGING_DIR"
 cp -R "$APP_PATH" "$STAGING_DIR/"
-cp "$REPO_ROOT/README.md" "$STAGING_DIR/README.md"
+cp "$REPO_ROOT/README.md" "$STAGING_DIR/README.txt"
 cp "$REPO_ROOT/LICENSE" "$STAGING_DIR/LICENSE.txt"
 ln -s /Applications "$STAGING_DIR/Applications"
 
@@ -55,7 +55,7 @@ hdiutil create -volname "ESP32 Multi Flash Manager ${VERSION}" \
 rm -rf "$(dirname "$STAGING_DIR")"
 
 echo "==> DMG ready: $DMG_PATH"
-echo "    Contains: ESP32MultiFlashManager.app, README.md, LICENSE.txt,"
+echo "    Contains: ESP32MultiFlashManager.app, README.txt, LICENSE.txt,"
 echo "    and an Applications symlink for drag-to-install."
 echo "    Note: this build is not code-signed/notarized, so first launch"
 echo "    requires right-click -> Open (or System Settings -> Privacy &"

@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.device_manager.port_scanner import get_port_device_names
 from app.models.device_model import DeviceConfig
 from app.utilities.constants import SUPPORTED_CHIPS, FLASH_MODES
 from app.utilities.helpers import is_valid_hex_address
@@ -49,13 +50,22 @@ class ValidationReport:
         self.issues.append(ValidationIssue(Severity.WARNING, device_name, message))
 
 
-def validate_devices(devices: list[DeviceConfig]) -> ValidationReport:
+def validate_devices(devices: list[DeviceConfig], connected_ports: set[str] | None = None) -> ValidationReport:
     """
     Validate a list of devices that are about to be flashed together.
     Returns a ValidationReport containing every issue found; the caller
     decides whether ERROR-level issues block the upload (they should).
+
+    `connected_ports` is the set of serial ports currently visible to the
+    OS (e.g. from PortWatcher's live scan). If omitted, a fresh scan is
+    taken here so this function still works standalone/in tests. Passing
+    it in lets the caller flag "port not connected" immediately when
+    Upload is clicked, instead of only finding out ~10-30 seconds later
+    when esptool's own connect-retry loop finally gives up.
     """
     report = ValidationReport()
+    if connected_ports is None:
+        connected_ports = get_port_device_names()
 
     # --- Duplicate port detection (only across devices being uploaded) ---
     port_usage: dict[str, list[str]] = {}
@@ -68,16 +78,22 @@ def validate_devices(devices: list[DeviceConfig]) -> ValidationReport:
                 report.add_error(name, f"Port {port} is used by multiple devices: {', '.join(names)}")
 
     for device in devices:
-        _validate_single_device(device, report)
+        _validate_single_device(device, report, connected_ports)
 
     return report
 
 
-def _validate_single_device(device: DeviceConfig, report: ValidationReport) -> None:
+def _validate_single_device(device: DeviceConfig, report: ValidationReport, connected_ports: set[str]) -> None:
     name = device.name
 
     if not device.com_port:
         report.add_error(name, "No port selected.")
+    elif device.com_port not in connected_ports:
+        report.add_error(
+            name,
+            f"Port {device.com_port} is not currently connected. Plug in the device, or "
+            "select the correct port in Device Settings, then try again.",
+        )
 
     if device.chip_type not in SUPPORTED_CHIPS:
         report.add_error(name, f"Unsupported/invalid chip selection: '{device.chip_type}'.")

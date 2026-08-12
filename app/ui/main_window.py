@@ -9,7 +9,7 @@ The application's top-level QMainWindow. Responsible for:
     to the relevant panels
   - Project lifecycle (new/open/save/save-as) with unsaved-changes checks
   - Live console window management (one per device, created on demand)
-  - Theme switching and persistent window layout via QSettings
+  - Theme switching and persistent window layout via AppSettings
 
 This module intentionally contains no flashing logic and no file-format
 logic itself — it delegates to the controllers/managers and only handles
@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, QByteArray
-from PySide6.QtGui import QAction, QIcon, QKeySequence
+from PySide6.QtCore import QByteArray, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -57,14 +57,10 @@ from app.ui.profile_dialog import ProfileDialog
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.theme import stylesheet_for
 from app.ui.validation_dialog import ValidationReportDialog
-from app.utilities.constants import (
-    APP_NAME,
-    APP_VERSION,
-    LIVE_LOG_MAX_LINES,
-    ORG_NAME,
-    PROJECT_FILE_FILTER,
-)
+from app.utilities.app_settings import get_settings
+from app.utilities.constants import APP_NAME, APP_VERSION, LIVE_LOG_MAX_LINES, PROJECT_FILE_FILTER
 from app.utilities.helpers import resource_path, safe_filename
+from app.utilities.update_checker import check_for_update
 from app.workers.port_watcher import PortWatcher
 
 logger = get_logger(__name__)
@@ -77,7 +73,7 @@ class MainWindow(QMainWindow):
         self.resize(1400, 860)
         self.setWindowIcon(self._load_window_icon())
 
-        self.settings = QSettings(ORG_NAME, APP_NAME)
+        self.settings = get_settings()
 
         # ---------------- Controllers ----------------
         self.project_controller = ProjectController(self)
@@ -358,7 +354,7 @@ class MainWindow(QMainWindow):
         if not devices:
             return
 
-        report = validate_devices(devices)
+        report = validate_devices(devices, self._connected_ports)
         if report.has_errors:
             ValidationReportDialog(report, self).exec()
             return
@@ -632,12 +628,34 @@ class MainWindow(QMainWindow):
         self._apply_theme("light" if current == "dark" else "dark")
 
     def _on_check_updates(self) -> None:
-        QMessageBox.information(
-            self, "Check for Updates",
-            f"You are running {APP_NAME} v{APP_VERSION}.\n\n"
-            "Automatic update checking is not yet configured for this build. "
-            "Please check the project's distribution channel for newer releases.",
+        self.statusBar().showMessage("Checking for updates...", 4000)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            info = check_for_update()
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if info is None:
+            QMessageBox.information(
+                self, "Check for Updates",
+                f"You are running {APP_NAME} v{APP_VERSION}, which is up to date.",
+            )
+            return
+
+        asset_note = f"\n\nFile: {info.asset_name}" if info.asset_name else ""
+        reply = QMessageBox.question(
+            self, "Update Available",
+            f"A newer version is available: v{info.version} (you have v{APP_VERSION}).{asset_note}\n\n"
+            f"This will open the download in your browser and close {APP_NAME} so the "
+            "installer can replace the running files. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        QDesktopServices.openUrl(QUrl(info.target_url))
+        self.close()
 
     @staticmethod
     def _load_window_icon() -> QIcon:

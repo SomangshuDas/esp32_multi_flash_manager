@@ -92,7 +92,8 @@ class FlashWorker(QThread):
 
             self.status_changed.emit(device_id, STATUS_CONNECTING)
 
-            saw_writing = False
+            port_lost = False
+            wrote_any = False
             for line in self._process.iter_lines():
                 if self._cancel_requested:
                     break
@@ -103,14 +104,32 @@ class FlashWorker(QThread):
                 if event.kind == "erasing":
                     self.status_changed.emit(device_id, STATUS_ERASING)
                 elif event.kind == "writing":
-                    if not saw_writing:
-                        self.status_changed.emit(device_id, STATUS_UPLOADING)
-                        saw_writing = True
+                    # Re-emit STATUS_UPLOADING on every "Writing at..." line,
+                    # not just the first one. A project with more than one
+                    # firmware entry gets a "Hash of data verified." line
+                    # (-> STATUS_VERIFYING) after EACH file, followed by the
+                    # next file's "Writing at..." line. Only firing this
+                    # once left the status badge stuck on "Verifying" for
+                    # the rest of the run even though esptool had already
+                    # moved on to writing the next segment.
+                    self.status_changed.emit(device_id, STATUS_UPLOADING)
+                    wrote_any = True
                     if event.percent is not None:
                         self.progress_changed.emit(device_id, event.percent, event.address)
                         self._update_speed(device_id, start_time)
                 elif event.kind == "verifying":
                     self.status_changed.emit(device_id, STATUS_VERIFYING)
+                elif event.kind == "port_lost":
+                    # The board isn't reachable on the selected port -- either
+                    # it was never there (wrong port / not plugged in yet, in
+                    # the rare case that slipped past the pre-upload port
+                    # check) or it dropped off the bus mid-flash (loose
+                    # cable, brown-out, driver hiccup). esptool itself will
+                    # retry a few times and then raise, which prints a Python
+                    # traceback into this same stream -- remembered here so
+                    # the final failure message is a clear, actionable
+                    # sentence instead of a bare "exited with code 1".
+                    port_lost = True
 
             return_code = self._process.wait(timeout=10) if not self._cancel_requested else -9
 
@@ -122,6 +141,21 @@ class FlashWorker(QThread):
             if return_code == 0:
                 self.progress_changed.emit(device_id, 100, "")
                 self._finish(device_id, True, "Flash completed successfully.", start_time)
+            elif port_lost and wrote_any:
+                self._finish(
+                    device_id, False,
+                    f"Device disconnected from {self.device.com_port} during flashing "
+                    "(the port became unavailable). Check the USB cable/connection and retry.",
+                    start_time,
+                )
+            elif port_lost:
+                self._finish(
+                    device_id, False,
+                    f"Could not connect to {self.device.com_port} (port unavailable or already in "
+                    "use). Check the cable/connection, that the correct port is selected, and that "
+                    "no other program has it open, then retry.",
+                    start_time,
+                )
             else:
                 self._finish(device_id, False, f"esptool exited with code {return_code}.", start_time)
 

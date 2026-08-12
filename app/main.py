@@ -39,14 +39,14 @@ if _ESPTOOL_REEXEC_FLAG in sys.argv:
     sys.argv = [a for a in sys.argv if a != _ESPTOOL_REEXEC_FLAG]
     sys.exit(esptool.main(sys.argv[1:]))
 
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, QLockFile
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.logging_setup.logger import configure_logging, get_logger
 from app.ui.main_window import MainWindow
 from app.utilities.constants import APP_NAME, ESPTOOL_REEXEC_FLAG, ORG_NAME, PROJECT_FILE_EXTENSION
-from app.utilities.helpers import resource_path
+from app.utilities.helpers import get_app_data_dir, resource_path
 
 assert ESPTOOL_REEXEC_FLAG == _ESPTOOL_REEXEC_FLAG, (
     "app.utilities.constants.ESPTOOL_REEXEC_FLAG must match main.py's fast-path "
@@ -146,6 +146,24 @@ def _install_exception_hook(app: QApplication) -> None:
     sys.excepthook = handle_exception
 
 
+def _acquire_single_instance_lock() -> QLockFile | None:
+    """
+    Take an exclusive lock on a file in the app-data folder so a second
+    launch of the app can detect a first one is already running (rather
+    than opening a confusing second window pointed at the same devices/
+    settings.json). Returns the held QLockFile (keep it referenced for the
+    app's whole lifetime — it releases automatically when garbage
+    collected or the process exits), or None if another instance already
+    holds it.
+    """
+    lock_path = get_app_data_dir() / "app.lock"
+    lock_file = QLockFile(str(lock_path))
+    lock_file.setStaleLockTime(0)  # a lock left by a crashed process never blocks forever
+    if lock_file.tryLock(100):
+        return lock_file
+    return None
+
+
 def main() -> int:
     log_dir = configure_logging(debug="--debug" in sys.argv)
     logger.info("Starting %s", APP_NAME)
@@ -156,6 +174,16 @@ def main() -> int:
     app.setWindowIcon(_load_app_icon())
 
     _install_exception_hook(app)
+
+    instance_lock = _acquire_single_instance_lock()
+    if instance_lock is None:
+        logger.warning("Another instance is already running; exiting.")
+        QMessageBox.warning(
+            None, APP_NAME,
+            f"{APP_NAME} is already running.\n\nOnly one instance can run at a time.",
+        )
+        return 1
+    app.instance_lock = instance_lock  # keep it alive for the process lifetime
 
     window = MainWindow()
     window.show_startup()

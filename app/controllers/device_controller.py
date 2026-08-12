@@ -14,6 +14,8 @@ from PySide6.QtCore import QObject, Signal
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
 from app.models.project_model import ProjectModel
+from app.utilities.app_settings import get_settings
+from app.utilities.constants import DEFAULT_BAUD, DEFAULT_FLASH_MODE
 
 logger = get_logger(__name__)
 
@@ -51,7 +53,17 @@ class DeviceController(QObject):
 
     # ------------------------------------------------------------------
     def add_device(self, name: str = "New Device") -> DeviceConfig:
-        device = DeviceConfig(name=name)
+        # New devices pick up the app-wide "Default Baud Rate" / "Default
+        # Flash Mode" from Settings (falling back to the constants module
+        # if the user has never opened Settings yet), so changing those
+        # preferences actually applies to devices added afterwards instead
+        # of only affecting the Settings dialog itself.
+        settings = get_settings()
+        device = DeviceConfig(
+            name=name,
+            baud_rate=int(settings.value("default_baud", DEFAULT_BAUD)),
+            flash_mode=str(settings.value("default_flash_mode", DEFAULT_FLASH_MODE)),
+        )
         self.project.add_device(device)
         logger.info("Added device '%s' (%s)", device.name, device.id)
         self.device_added.emit(device.id)

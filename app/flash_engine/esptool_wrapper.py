@@ -37,24 +37,36 @@ logger = get_logger(__name__)
 
 # --------------------------------------------------------------------------
 # Regexes used to turn raw esptool stdout lines into structured progress.
-# esptool prints lines such as:
-#   "Writing at 0x00010000... (42 %)"
-#   "Wrote 1048576 bytes (612345 compressed) at 0x00010000 in 8.4 seconds..."
-#   "Hash of data verified."
+#
+# esptool's own progress-line format has changed across major versions, and
+# both are seen in the wild depending on which esptool build a machine has:
+#
+#   legacy (esptool < 5):
+#     "Writing at 0x00010000... (42 %)"
+#   current (esptool 5.x, rich-based progress bar, plain-text when piped):
+#     "Writing at 0x00001000 [ ] 0.0% 0/13104 bytes..."
+#     "Writing at 0x00005a30 [==============================] 100.0% 13104/13104 bytes..."
+#
+# The legacy-only pattern silently matched nothing against 5.x output,
+# which meant every "writing" line fell through to "raw" -- no progress
+# updates, and no re-assertion of the "Uploading" status after a prior
+# "Hash of data verified." line, leaving the status badge stuck on
+# "Verifying" for the rest of the run even though esptool was actively
+# writing the next file. Both formats are matched here so this keeps
+# working regardless of which esptool version is bundled/installed.
 # --------------------------------------------------------------------------
-_RE_WRITING_AT = re.compile(r"Writing at (0x[0-9a-fA-F]+)\.\.\.\s*\((\d+)\s*%\)")
-_RE_WROTE = re.compile(
-    r"Wrote (\d+) bytes.*at (0x[0-9a-fA-F]+) in ([\d.]+) seconds"
-)
+_RE_WRITING_AT_LEGACY = re.compile(r"Writing at (0x[0-9a-fA-F]+)\.\.\.\s*\((\d+(?:\.\d+)?)\s*%\)")
+_RE_WRITING_AT_CURRENT = re.compile(r"Writing at (0x[0-9a-fA-F]+)\s*\[[^\]]*\]\s*(\d+(?:\.\d+)?)\s*%")
 _RE_CONNECTING = re.compile(r"Connecting\.\.\.|Serial port")
 _RE_ERASING = re.compile(r"Erasing flash|Chip erase")
 _RE_HASH_VERIFIED = re.compile(r"Hash of data verified")
 _RE_HARD_RESET = re.compile(r"Hard resetting|Leaving\.\.\.")
+_RE_PORT_LOST = re.compile(r"could not open port|port is busy or doesn't exist", re.IGNORECASE)
 
 
 @dataclass
 class ProgressEvent:
-    kind: str  # "connecting" | "erasing" | "writing" | "verifying" | "resetting" | "raw"
+    kind: str  # "connecting" | "erasing" | "writing" | "verifying" | "resetting" | "port_lost" | "raw"
     address: str = ""
     percent: int | None = None
     raw_line: str = ""
@@ -62,13 +74,16 @@ class ProgressEvent:
 
 def parse_progress_line(line: str) -> ProgressEvent:
     """Turn a single line of esptool stdout into a structured ProgressEvent."""
-    match = _RE_WRITING_AT.search(line)
+    match = _RE_WRITING_AT_CURRENT.search(line) or _RE_WRITING_AT_LEGACY.search(line)
     if match:
-        return ProgressEvent(kind="writing", address=match.group(1), percent=int(match.group(2)), raw_line=line)
+        percent = int(round(float(match.group(2))))
+        return ProgressEvent(kind="writing", address=match.group(1), percent=percent, raw_line=line)
     if _RE_ERASING.search(line):
         return ProgressEvent(kind="erasing", raw_line=line)
     if _RE_HASH_VERIFIED.search(line):
         return ProgressEvent(kind="verifying", raw_line=line)
+    if _RE_PORT_LOST.search(line):
+        return ProgressEvent(kind="port_lost", raw_line=line)
     if _RE_CONNECTING.search(line):
         return ProgressEvent(kind="connecting", raw_line=line)
     if _RE_HARD_RESET.search(line):

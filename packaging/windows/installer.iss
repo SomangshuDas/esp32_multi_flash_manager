@@ -99,12 +99,12 @@ Name: "associate"; Description: "Open .efmproj project files with {#AppName}"; G
 [Files]
 Source: "..\..\dist\ESP32MultiFlashManager.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\resources\icons\app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion; DestName: "README.txt"
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion; DestName: "LICENSE.txt"
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Comment: "Launch {#AppName}"
-Name: "{group}\README"; Filename: "{app}\README.md"; Comment: "Open the README"
+Name: "{group}\README"; Filename: "{app}\README.txt"; Comment: "Open the README"
 Name: "{group}\License (MIT)"; Filename: "{app}\LICENSE.txt"; Comment: "View the MIT license"
 Name: "{group}\{#AppName} on GitHub"; Filename: "{#AppURL}"; Comment: "Project homepage and source code"
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"; Comment: "Remove {#AppName} from this computer"
@@ -127,12 +127,12 @@ Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}\SupportedTypes"
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\README.md"; Description: "View the README"; Flags: postinstall shellexec skipifsilent unchecked
+Filename: "{app}\README.txt"; Description: "View the README"; Flags: postinstall shellexec skipifsilent unchecked
 
 [UninstallDelete]
 Type: files; Name: "{app}\app_icon.ico"
 Type: files; Name: "{app}\LICENSE.txt"
-Type: files; Name: "{app}\README.md"
+Type: files; Name: "{app}\README.txt"
 
 [Code]
 { Explorer needs a nudge to notice a new/changed file association right
@@ -148,4 +148,38 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
+end;
+
+{ ------------------------------------------------------------------------
+  Uninstall: user data (logs, firmware profiles, settings.json, recent
+  projects, the "keep" defaults, everything) lives entirely under
+  %APPDATA%\ESP32MultiFlashManager — never in the registry and never
+  inside {app} — precisely so it can be offered as a choice here instead
+  of being silently deleted (or silently orphaned) alongside the program
+  files. [UninstallDelete] above only ever touches files under {app}.
+  ------------------------------------------------------------------------ }
+function AppDataFolder(): String;
+begin
+  Result := ExpandConstant('{userappdata}\ESP32MultiFlashManager');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataFolder: String;
+  KeepData: Integer;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    DataFolder := AppDataFolder();
+    if DirExists(DataFolder) then
+    begin
+      KeepData := MsgBox(
+        'Keep your logs, firmware profiles, settings, and recent-projects list?' + #13#10 + #13#10 +
+        'Choose Yes to leave that data in place (e.g. for a future reinstall).' + #13#10 +
+        'Choose No to remove it too, deleting the entire ' + DataFolder + ' folder.',
+        mbConfirmation, MB_YESNO);
+      if KeepData = IDNO then
+        DelTree(DataFolder, True, True, True);
+    end;
+  end;
 end;

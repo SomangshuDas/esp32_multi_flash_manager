@@ -2,7 +2,7 @@
 project_io.py
 ==============
 Handles saving and loading .efmproj project files (plain JSON), plus the
-"recent projects" list persisted via QSettings. Designed to never raise
+"recent projects" list persisted via AppSettings. Designed to never raise
 an uncaught exception into the UI layer — callers get either a valid
 ProjectModel or a ProjectLoadError with a human-readable message.
 """
@@ -12,11 +12,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
-
 from app.logging_setup.logger import get_logger
 from app.models.project_model import ProjectModel
-from app.utilities.constants import MAX_RECENT_PROJECTS, ORG_NAME, APP_NAME
+from app.utilities.app_settings import get_settings
+from app.utilities.constants import MAX_RECENT_PROJECTS
 
 logger = get_logger(__name__)
 
@@ -77,16 +76,12 @@ def load_project(file_path: str) -> ProjectModel:
 
 
 # --------------------------------------------------------------------------
-# Recent projects (persisted via QSettings, which maps to the Windows
-# registry under HKCU on Windows, a .plist on macOS, or an INI file under
-# ~/.config on Linux — no extra file to manage on any platform).
+# Recent projects (persisted via AppSettings, a single settings.json file
+# under the per-user roaming app-data folder — no registry involvement on
+# any platform).
 # --------------------------------------------------------------------------
-def _settings() -> QSettings:
-    return QSettings(ORG_NAME, APP_NAME)
-
-
 def add_recent_project(file_path: str) -> None:
-    settings = _settings()
+    settings = get_settings()
     recents: list[str] = settings.value("recent_projects", [], type=list) or []
     recents = [p for p in recents if p != file_path]
     recents.insert(0, file_path)
@@ -95,11 +90,11 @@ def add_recent_project(file_path: str) -> None:
 
 
 def get_recent_projects() -> list[str]:
-    settings = _settings()
+    settings = get_settings()
     recents: list[str] = settings.value("recent_projects", [], type=list) or []
     # Filter out projects that no longer exist on disk.
     return [p for p in recents if Path(p).is_file()]
 
 
 def clear_recent_projects() -> None:
-    _settings().setValue("recent_projects", [])
+    get_settings().setValue("recent_projects", [])

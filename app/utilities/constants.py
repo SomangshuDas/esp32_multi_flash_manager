@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -39,10 +39,10 @@ FLASH_SIZES = [
 ]
 COMPRESSION_MODES = ["default (compressed)", "uncompressed (-u)"]
 
-DEFAULT_BAUD = 921600
-DEFAULT_FLASH_MODE = "dio"
-DEFAULT_FLASH_FREQ = "40m"
-DEFAULT_FLASH_SIZE = "4MB"
+DEFAULT_BAUD = 115200
+DEFAULT_FLASH_MODE = "keep"
+DEFAULT_FLASH_FREQ = "keep"
+DEFAULT_FLASH_SIZE = "keep"
 DEFAULT_CHIP = "auto"
 
 # --------------------------------------------------------------------------
@@ -117,3 +117,8 @@ ESPTOOL_REEXEC_FLAG = "--_run-esptool"
 MAX_RECENT_PROJECTS = 10
 PORT_SCAN_INTERVAL_MS = 2000
 LIVE_LOG_MAX_LINES = 10000
+
+# --------------------------------------------------------------------------
+# Update checking (GitHub Releases)
+# --------------------------------------------------------------------------
+GITHUB_REPO = "SomangshuDas/esp32_multi_flash_manager"
