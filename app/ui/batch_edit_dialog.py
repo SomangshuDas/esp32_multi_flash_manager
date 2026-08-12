@@ -22,7 +22,6 @@ _FIELDS = {
     "Flash Frequency": ("flash_frequency", "combo", FLASH_FREQUENCIES),
     "Flash Size": ("flash_size", "combo", FLASH_SIZES),
     "Erase Before Upload": ("erase_before_upload", "bool", None),
-    "Verify Flash": ("verify_flash", "bool", None),
     "Reset After Upload": ("reset_after_upload", "bool", None),
     "Compression": ("compression", "bool", None),
     "Stub Loader": ("stub_loader", "bool", None),

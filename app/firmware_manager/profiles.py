@@ -39,7 +39,6 @@ class FirmwareProfile:
     flash_frequency: str = DEFAULT_FLASH_FREQ
     flash_size: str = DEFAULT_FLASH_SIZE
     erase_before_upload: bool = False
-    verify_flash: bool = True
     firmware: list[FirmwareEntry] = field(default_factory=list)
 
     def apply_to_device(self, device: DeviceConfig) -> None:
@@ -50,7 +49,6 @@ class FirmwareProfile:
         device.flash_frequency = self.flash_frequency
         device.flash_size = self.flash_size
         device.erase_before_upload = self.erase_before_upload
-        device.verify_flash = self.verify_flash
         device.firmware = [f.duplicate() for f in self.firmware]
         for entry in device.firmware:
             entry.refresh()
@@ -66,7 +64,6 @@ class FirmwareProfile:
             flash_frequency=device.flash_frequency,
             flash_size=device.flash_size,
             erase_before_upload=device.erase_before_upload,
-            verify_flash=device.verify_flash,
             firmware=[f.duplicate() for f in device.firmware],
         )
 
@@ -79,7 +76,6 @@ class FirmwareProfile:
             "flash_frequency": self.flash_frequency,
             "flash_size": self.flash_size,
             "erase_before_upload": self.erase_before_upload,
-            "verify_flash": self.verify_flash,
             "firmware": [f.to_dict() for f in self.firmware],
         }
 
@@ -93,7 +89,6 @@ class FirmwareProfile:
             flash_frequency=data.get("flash_frequency", DEFAULT_FLASH_FREQ),
             flash_size=data.get("flash_size", DEFAULT_FLASH_SIZE),
             erase_before_upload=data.get("erase_before_upload", False),
-            verify_flash=data.get("verify_flash", True),
             firmware=[FirmwareEntry.from_dict(f) for f in data.get("firmware", [])],
         )
 

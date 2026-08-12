@@ -46,8 +46,10 @@ manual `File → Open Project` step needed.
 2. Select it in the list, then open the **Device Settings** tab and fill
    in: Friendly Name, Port (pick from the live dropdown or type one),
    Chip Type, Upload Speed, Flash Mode/Frequency/Size, and the flashing
-   toggles (Erase / Verify / Reset / Compression / Stub Loader). You can
+   toggles (Erase / Reset / Compression / Stub Loader). You can
    also add raw extra `esptool` arguments in **Custom Flash Arguments**.
+   Flash verification now happens automatically after every write (esptool
+   v5+), so there is no longer a separate Verify toggle.
 3. Switch to the **Firmware** tab to add `.bin` files (see next section).
 
 To quickly configure many similar boards, configure one device fully, then

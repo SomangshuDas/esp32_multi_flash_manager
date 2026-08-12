@@ -54,7 +54,6 @@ class DeviceConfig:
     flash_frequency: str = DEFAULT_FLASH_FREQ
     flash_size: str = DEFAULT_FLASH_SIZE
     erase_before_upload: bool = False
-    verify_flash: bool = True
     reset_after_upload: bool = True
     compression: bool = True
     stub_loader: bool = True
@@ -110,7 +109,6 @@ class DeviceConfig:
             flash_frequency=self.flash_frequency,
             flash_size=self.flash_size,
             erase_before_upload=self.erase_before_upload,
-            verify_flash=self.verify_flash,
             reset_after_upload=self.reset_after_upload,
             compression=self.compression,
             stub_loader=self.stub_loader,
@@ -133,7 +131,6 @@ class DeviceConfig:
             "flash_frequency": self.flash_frequency,
             "flash_size": self.flash_size,
             "erase_before_upload": self.erase_before_upload,
-            "verify_flash": self.verify_flash,
             "reset_after_upload": self.reset_after_upload,
             "compression": self.compression,
             "stub_loader": self.stub_loader,
@@ -153,7 +150,6 @@ class DeviceConfig:
             flash_frequency=data.get("flash_frequency", DEFAULT_FLASH_FREQ),
             flash_size=data.get("flash_size", DEFAULT_FLASH_SIZE),
             erase_before_upload=data.get("erase_before_upload", False),
-            verify_flash=data.get("verify_flash", True),
             reset_after_upload=data.get("reset_after_upload", True),
             compression=data.get("compression", True),
             stub_loader=data.get("stub_loader", True),

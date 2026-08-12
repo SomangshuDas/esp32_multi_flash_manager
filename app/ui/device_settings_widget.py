@@ -3,7 +3,7 @@ device_settings_widget.py
 ==========================
 Form panel for editing all per-device settings: name, serial port, chip,
 baud rate, flash mode/frequency/size, and the boolean flashing options
-(erase / verify / reset / compression / stub loader), plus a free-text
+(erase / reset / compression / stub loader), plus a free-text
 custom-arguments field for power users.
 """
 
@@ -62,7 +62,6 @@ class DeviceSettingsWidget(QWidget):
         self.flash_size_combo.addItems(FLASH_SIZES)
 
         self.erase_check = QCheckBox("Erase flash before upload")
-        self.verify_check = QCheckBox("Verify flash after upload")
         self.reset_check = QCheckBox("Reset device after upload")
         self.compression_check = QCheckBox("Enable compression")
         self.stub_check = QCheckBox("Use stub loader (recommended)")
@@ -78,7 +77,6 @@ class DeviceSettingsWidget(QWidget):
         form.addRow("Flash Frequency:", self.flash_freq_combo)
         form.addRow("Flash Size:", self.flash_size_combo)
         form.addRow(self.erase_check)
-        form.addRow(self.verify_check)
         form.addRow(self.reset_check)
         form.addRow(self.compression_check)
         form.addRow(self.stub_check)
@@ -98,7 +96,6 @@ class DeviceSettingsWidget(QWidget):
         self.flash_freq_combo.currentTextChanged.connect(self._commit)
         self.flash_size_combo.currentTextChanged.connect(self._commit)
         self.erase_check.toggled.connect(self._commit)
-        self.verify_check.toggled.connect(self._commit)
         self.reset_check.toggled.connect(self._commit)
         self.compression_check.toggled.connect(self._commit)
         self.stub_check.toggled.connect(self._commit)
@@ -132,7 +129,6 @@ class DeviceSettingsWidget(QWidget):
             self.flash_freq_combo.setCurrentText(device.flash_frequency)
             self.flash_size_combo.setCurrentText(device.flash_size)
             self.erase_check.setChecked(device.erase_before_upload)
-            self.verify_check.setChecked(device.verify_flash)
             self.reset_check.setChecked(device.reset_after_upload)
             self.compression_check.setChecked(device.compression)
             self.stub_check.setChecked(device.stub_loader)
@@ -145,7 +141,7 @@ class DeviceSettingsWidget(QWidget):
         for widget in (
             self.name_edit, self.port_combo, self.chip_combo, self.baud_combo,
             self.flash_mode_combo, self.flash_freq_combo, self.flash_size_combo,
-            self.erase_check, self.verify_check, self.reset_check,
+            self.erase_check, self.reset_check,
             self.compression_check, self.stub_check, self.custom_args_edit,
         ):
             widget.setEnabled(enabled)
@@ -168,7 +164,6 @@ class DeviceSettingsWidget(QWidget):
         device.flash_frequency = self.flash_freq_combo.currentText()
         device.flash_size = self.flash_size_combo.currentText()
         device.erase_before_upload = self.erase_check.isChecked()
-        device.verify_flash = self.verify_check.isChecked()
         device.reset_after_upload = self.reset_check.isChecked()
         device.compression = self.compression_check.isChecked()
         device.stub_loader = self.stub_check.isChecked()

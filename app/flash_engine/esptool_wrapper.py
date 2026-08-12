@@ -117,26 +117,23 @@ class FlashCommandBuilder:
         if not device.stub_loader:
             args += ["--no-stub"]
 
-        args += ["write_flash"]
+        args += ["write-flash"]
 
         if device.flash_mode and device.flash_mode != "keep":
-            args += ["--flash_mode", device.flash_mode]
+            args += ["--flash-mode", device.flash_mode]
         if device.flash_frequency and device.flash_frequency != "keep":
-            args += ["--flash_freq", device.flash_frequency]
+            args += ["--flash-freq", device.flash_frequency]
         if device.flash_size and device.flash_size != "keep":
-            args += ["--flash_size", device.flash_size]
+            args += ["--flash-size", device.flash_size]
 
         if device.erase_before_upload:
             args += ["--erase-all"]
-
-        if device.verify_flash:
-            args += ["--verify"]
 
         if not device.compression:
             args += ["--no-compress"]
 
         if not device.reset_after_upload:
-            args += ["--after", "no_reset"]
+            args += ["--after", "no-reset"]
 
         if device.custom_flash_args.strip():
             # Allow power users to append raw extra arguments (e.g. --no-progress)
@@ -153,7 +150,7 @@ class FlashCommandBuilder:
         args: list[str] = _esptool_command_prefix()
         if device.chip_type and device.chip_type != "auto":
             args += ["--chip", device.chip_type]
-        args += ["--port", device.com_port, "--baud", str(device.baud_rate), "erase_flash"]
+        args += ["--port", device.com_port, "--baud", str(device.baud_rate), "erase-flash"]
         return args
 
     @staticmethod
@@ -162,7 +159,7 @@ class FlashCommandBuilder:
         args: list[str] = _esptool_command_prefix()
         if device.chip_type and device.chip_type != "auto":
             args += ["--chip", device.chip_type]
-        args += ["--port", device.com_port, "--baud", str(device.baud_rate), "chip_id"]
+        args += ["--port", device.com_port, "--baud", str(device.baud_rate), "chip-id"]
         return args
 
 

@@ -24,7 +24,7 @@ implementation for correctness.
 
 - **Unlimited devices, unlimited firmware files per device.** Each device
   has its own port, chip type, baud rate, flash mode/frequency/size, and
-  boolean flags (erase / verify / reset / compression / stub loader), plus
+  boolean flags (erase / reset / compression / stub loader), plus
   a free-text custom-arguments field for power users.
 - **True parallel flashing.** Every device you upload to gets its own
   worker thread and its own `esptool` subprocess — a slow or stuck board

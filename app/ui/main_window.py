@@ -45,7 +45,7 @@ from app.controllers.flash_controller import FlashController
 from app.controllers.project_controller import ProjectController
 from app.flash_engine.validator import validate_devices
 from app.logging_setup.logger import get_logger
-from app.project_manager.project_io import get_recent_projects
+from app.project_manager.project_io import clear_recent_projects, get_recent_projects
 from app.ui.batch_edit_dialog import BatchEditDialog
 from app.ui.dashboard import DashboardWidget
 from app.ui.device_panel import DevicePanel
@@ -582,6 +582,24 @@ class MainWindow(QMainWindow):
             action = QAction(path, self)
             action.triggered.connect(lambda _checked, p=path: self._on_open_project(p))
             self.recent_menu.addAction(action)
+        self.recent_menu.addSeparator()
+        clear_action = QAction("Clear Recent Projects", self)
+        clear_action.triggered.connect(self._on_clear_recent_projects)
+        self.recent_menu.addAction(clear_action)
+
+    def _on_clear_recent_projects(self) -> None:
+        reply = QMessageBox.question(
+            self, "Clear Recent Projects",
+            "Remove all entries from the Recent Projects list?\n\n"
+            "This does not delete any project files, it only clears the list.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        clear_recent_projects()
+        self._refresh_recent_menu()
+        self.statusBar().showMessage("Recent Projects list cleared.", 3000)
 
     # ------------------------------------------------------------------
     # Ports / dashboard
