@@ -10,6 +10,7 @@ scrollback.
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.ui.widgets import make_scrollable
 from app.utilities.constants import LIVE_LOG_MAX_LINES, STATUS_COLORS, STATUS_WAITING
 from app.utilities.helpers import safe_filename, timestamp_now
 
@@ -58,7 +60,7 @@ class LiveConsoleWidget(QWidget):
         status_row.addWidget(self.progress_bar, 1)
         layout.addLayout(status_row)
 
-        toolbar = QHBoxLayout()
+        toolbar_row = QHBoxLayout()
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Search log...")
         self.search_box.returnPressed.connect(self._on_search)
@@ -73,18 +75,27 @@ class LiveConsoleWidget(QWidget):
         self.clear_button = QPushButton("Clear")
         self.clear_button.clicked.connect(self._clear)
 
-        toolbar.addWidget(self.search_box, 1)
-        toolbar.addWidget(self.autoscroll_check)
-        toolbar.addWidget(self.pause_button)
-        toolbar.addWidget(self.copy_button)
-        toolbar.addWidget(self.save_button)
-        toolbar.addWidget(self.clear_button)
-        layout.addLayout(toolbar)
+        toolbar_row.addWidget(self.search_box, 1)
+        toolbar_row.addWidget(self.autoscroll_check)
+        toolbar_row.addWidget(self.pause_button)
+        toolbar_row.addWidget(self.copy_button)
+        toolbar_row.addWidget(self.save_button)
+        toolbar_row.addWidget(self.clear_button)
+        toolbar_widget = QWidget()
+        toolbar_widget.setLayout(toolbar_row)
+        toolbar_scroll = make_scrollable(toolbar_widget, horizontal=True, vertical=False)
+        toolbar_scroll.setMaximumHeight(toolbar_widget.sizeHint().height() + 12)
+        layout.addWidget(toolbar_scroll)
 
         self.text_edit = QPlainTextEdit()
         self.text_edit.setReadOnly(True)
         self.text_edit.setMaximumBlockCount(LIVE_LOG_MAX_LINES)
         self.text_edit.setStyleSheet("font-family: Consolas, 'Courier New', monospace; font-size: 12px;")
+        # Long esptool lines scroll horizontally rather than always wrapping,
+        # so raw log formatting/alignment is preserved and never gets clipped.
+        self.text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         layout.addWidget(self.text_edit, 1)
 
     # ------------------------------------------------------------------

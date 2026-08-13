@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from app.device_manager.port_scanner import list_available_ports
 from app.models.device_model import DeviceConfig
+from app.ui.widgets import make_scrollable
 from app.utilities.constants import (
     BAUD_RATES, FLASH_FREQUENCIES, FLASH_MODES, FLASH_SIZES, SUPPORTED_CHIPS,
 )
@@ -37,7 +38,10 @@ class DeviceSettingsWidget(QWidget):
         self._device: DeviceConfig | None = None
         self._loading = False
 
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        content = QWidget()
+        layout = QVBoxLayout(content)
         self.title_label = QLabel("Settings — (no device selected)")
         self.title_label.setStyleSheet("font-weight: 600; font-size: 14px;")
         layout.addWidget(self.title_label)
@@ -84,6 +88,8 @@ class DeviceSettingsWidget(QWidget):
 
         layout.addLayout(form)
         layout.addStretch(1)
+
+        outer_layout.addWidget(make_scrollable(content))
 
         self.refresh_available_ports()
 

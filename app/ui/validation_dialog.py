@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QLabel, QTableWidget, QTableWidgetItem,
-    QVBoxLayout,
+    QAbstractItemView, QDialog, QDialogButtonBox, QLabel, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
+from PySide6.QtCore import Qt
 
 from app.flash_engine.validator import Severity, ValidationReport
+from app.ui.widgets import make_scrollable
 
 
 class ValidationReportDialog(QDialog):
@@ -24,7 +26,11 @@ class ValidationReportDialog(QDialog):
         self.resize(650, 400)
         self.report = report
 
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         error_count = sum(1 for i in report.issues if i.severity == Severity.ERROR)
         warning_count = sum(1 for i in report.issues if i.severity == Severity.WARNING)
@@ -44,16 +50,27 @@ class ValidationReportDialog(QDialog):
             table.setItem(row, 1, QTableWidgetItem(issue.device_name))
             table.setItem(row, 2, QTableWidgetItem(issue.message))
         table.horizontalHeader().setStretchLastSection(True)
+        # Explicit (rather than relying on Qt defaults) so both scrollbars
+        # are guaranteed to appear whenever the row/column content is
+        # bigger than the table's current viewport, however small the
+        # dialog is resized.
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        table.setMinimumHeight(120)
         layout.addWidget(table, 1)
 
         if report.has_errors:
             note = QLabel("Errors must be resolved before uploading. This upload has been blocked.")
             note.setStyleSheet("color: #e03131; font-weight: 600;")
+            note.setWordWrap(True)
             layout.addWidget(note)
             buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
             buttons.accepted.connect(self.reject)
         else:
             note = QLabel("No blocking errors. You may proceed, or cancel to review warnings first.")
+            note.setWordWrap(True)
             layout.addWidget(note)
             buttons = QDialogButtonBox(
                 QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -61,4 +78,6 @@ class ValidationReportDialog(QDialog):
             buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Proceed With Upload")
             buttons.accepted.connect(self.accept)
             buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+
+        outer_layout.addWidget(make_scrollable(content), 1)
+        outer_layout.addWidget(buttons)

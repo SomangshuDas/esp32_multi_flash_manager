@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.device_model import DeviceConfig
-from app.ui.widgets import StatusBadge
+from app.ui.widgets import StatusBadge, make_scrollable
 from app.utilities.constants import ACTIVE_STATUSES
 from app.utilities.helpers import human_readable_duration
 
@@ -69,7 +69,10 @@ class DevicePanel(QWidget):
         self._row_by_device_id: dict[str, int] = {}
         self._start_times: dict[str, float] = {}
 
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        content = QWidget()
+        layout = QVBoxLayout(content)
 
         toolbar = QHBoxLayout()
         self.add_button = QPushButton("+ Add Device")
@@ -116,7 +119,12 @@ class DevicePanel(QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setMinimumHeight(120)
         layout.addWidget(self.table, 1)
+
+        outer_layout.addWidget(make_scrollable(content))
 
     # ------------------------------------------------------------------
     def rebuild(self, devices: list[DeviceConfig]) -> None:

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from app.ui.widgets import make_scrollable
 from app.utilities.constants import BAUD_RATES, FLASH_FREQUENCIES, FLASH_MODES, FLASH_SIZES, SUPPORTED_CHIPS
 
 _FIELDS = {
@@ -36,7 +37,11 @@ class BatchEditDialog(QDialog):
         self.setWindowTitle("Batch Edit Devices")
         self.resize(420, 200)
 
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(QLabel(f"Apply a setting to devices ({selected_count} currently selected)."))
 
         form = QFormLayout()
@@ -58,10 +63,12 @@ class BatchEditDialog(QDialog):
 
         layout.addLayout(form)
 
+        outer_layout.addWidget(make_scrollable(content), 1)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer_layout.addWidget(buttons)
 
         self._on_field_changed(self.field_combo.currentText())
 

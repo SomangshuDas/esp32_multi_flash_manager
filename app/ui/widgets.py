@@ -6,10 +6,31 @@ Small, reusable custom widgets shared by multiple panels.
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QWidget
 
 from app.utilities.constants import STATUS_COLORS
+
+
+def make_scrollable(content: QWidget, *, horizontal: bool = True, vertical: bool = True) -> QScrollArea:
+    """Wrap `content` in a QScrollArea so its horizontal and/or vertical
+    scrollbar appears automatically whenever the content's natural size
+    exceeds whatever space the parent layout ends up giving it (a small
+    dialog, a dragged-thin splitter panel, a resized dock, etc.). Nothing
+    is ever silently clipped or hidden.
+    """
+    scroll = QScrollArea()
+    scroll.setWidget(content)
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(
+        Qt.ScrollBarPolicy.ScrollBarAsNeeded if horizontal else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+    scroll.setVerticalScrollBarPolicy(
+        Qt.ScrollBarPolicy.ScrollBarAsNeeded if vertical else Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    )
+    return scroll
 
 
 class StatusBadge(QWidget):

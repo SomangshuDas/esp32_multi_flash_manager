@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.history_model import HistoryEntry, export_history_csv
+from app.ui.widgets import make_scrollable
 
 
 class HistoryPanel(QWidget):
@@ -22,7 +23,10 @@ class HistoryPanel(QWidget):
         super().__init__(parent)
         self._entries: list[HistoryEntry] = []
 
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        content = QWidget()
+        layout = QVBoxLayout(content)
 
         toolbar = QHBoxLayout()
         self.export_button = QPushButton("Export CSV...")
@@ -39,7 +43,12 @@ class HistoryPanel(QWidget):
             ["Date", "Time", "Device", "Port", "Firmware", "Duration (s)", "Result"]
         )
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.table.setMinimumHeight(100)
         layout.addWidget(self.table, 1)
+
+        outer_layout.addWidget(make_scrollable(content))
 
     def add_entry(self, entry: HistoryEntry) -> None:
         self._entries.append(entry)

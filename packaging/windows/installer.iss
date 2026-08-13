@@ -150,14 +150,15 @@ begin
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
 end;
 
-{ ------------------------------------------------------------------------
-  Uninstall: user data (logs, firmware profiles, settings.json, recent
-  projects, the "keep" defaults, everything) lives entirely under
-  %APPDATA%\ESP32MultiFlashManager — never in the registry and never
-  inside {app} — precisely so it can be offered as a choice here instead
-  of being silently deleted (or silently orphaned) alongside the program
-  files. [UninstallDelete] above only ever touches files under {app}.
-  ------------------------------------------------------------------------ }
+// ------------------------------------------------------------------------
+// Uninstall: user data (logs, firmware profiles, settings.json, recent
+// projects, the "keep" defaults, everything) lives entirely under
+// %APPDATA%\ESP32MultiFlashManager -- never in the registry and never
+// inside the app folder -- precisely so it can be offered as a choice
+// here instead of being silently deleted (or silently orphaned) alongside
+// the program files. [UninstallDelete] above only ever touches files
+// under {app}.
+// ------------------------------------------------------------------------
 function AppDataFolder(): String;
 begin
   Result := ExpandConstant('{userappdata}\ESP32MultiFlashManager');

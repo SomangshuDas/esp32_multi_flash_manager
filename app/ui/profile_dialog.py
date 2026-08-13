@@ -8,6 +8,7 @@ configuration as a new named profile, or delete an existing one.
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QHBoxLayout, QInputDialog, QListWidget,
     QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget,
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from app.firmware_manager.profiles import FirmwareProfile, delete_profile, list_profiles, save_profile
 from app.models.device_model import DeviceConfig
+from app.ui.widgets import make_scrollable
 
 
 class ProfileDialog(QDialog):
@@ -25,8 +27,16 @@ class ProfileDialog(QDialog):
         self.device = device
         self.chosen_profile: FirmwareProfile | None = None
 
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+
         self.list_widget = QListWidget()
+        self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.list_widget.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.list_widget.setMinimumHeight(120)
         self._reload_list()
         layout.addWidget(self.list_widget, 1)
 
@@ -39,11 +49,13 @@ class ProfileDialog(QDialog):
         button_row.addWidget(self.delete_button)
         layout.addLayout(button_row)
 
+        outer_layout.addWidget(make_scrollable(content), 1)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Apply to Device")
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer_layout.addWidget(buttons)
 
     def _reload_list(self) -> None:
         self.list_widget.clear()

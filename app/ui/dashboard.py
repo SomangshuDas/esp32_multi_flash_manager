@@ -11,6 +11,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from app.models.device_model import DeviceConfig
+from app.ui.widgets import make_scrollable
 from app.utilities.constants import (
     ACTIVE_STATUSES,
     STATUS_COMPLETED,
@@ -45,7 +46,11 @@ class DashboardWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QHBoxLayout(self)
+        outer_layout = QHBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        content = QWidget()
+        layout = QHBoxLayout(content)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
 
@@ -63,6 +68,10 @@ class DashboardWidget(QWidget):
         ):
             layout.addWidget(tile)
         layout.addStretch(1)
+
+        scroll = make_scrollable(content, horizontal=True, vertical=False)
+        scroll.setMaximumHeight(content.sizeHint().height() + 12)
+        outer_layout.addWidget(scroll)
 
     def refresh(self, devices: list[DeviceConfig], connected_ports: set[str]) -> None:
         total = len(devices)
