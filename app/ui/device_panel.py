@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.device_model import DeviceConfig
-from app.ui.widgets import StatusBadge, make_scrollable
+from app.ui.widgets import StatusBadge, fit_table_columns, make_scrollable
 from app.utilities.constants import ACTIVE_STATUSES
 from app.utilities.helpers import human_readable_duration
 
@@ -108,12 +108,12 @@ class DevicePanel(QWidget):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(40)
-        default_widths = {
+        self._default_widths = {
             COL_NAME: 200, COL_PORT: 130, COL_CHIP: 90, COL_STATUS: 110,
             COL_PROGRESS: 150, COL_ELAPSED: 80, COL_ETA: 80, COL_SPEED: 90,
             COL_LOG: 90,
         }
-        for column, width in default_widths.items():
+        for column, width in self._default_widths.items():
             self.table.setColumnWidth(column, width)
 
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
@@ -133,6 +133,7 @@ class DevicePanel(QWidget):
         self._row_by_device_id.clear()
         for device in devices:
             self._add_row(device)
+        fit_table_columns(self.table, self._default_widths)
 
     def _add_row(self, device: DeviceConfig) -> None:
         row = self.table.rowCount()
@@ -161,6 +162,8 @@ class DevicePanel(QWidget):
         log_button.clicked.connect(lambda _checked, did=device.id: self.view_log_requested.emit(did))
         self.table.setCellWidget(row, COL_LOG, log_button)
 
+        fit_table_columns(self.table, self._default_widths)
+
     def remove_device_row(self, device_id: str) -> None:
         row = self._row_by_device_id.pop(device_id, None)
         if row is None:
@@ -179,6 +182,7 @@ class DevicePanel(QWidget):
         self.table.item(row, COL_NAME).setText(device.name)
         self.table.item(row, COL_PORT).setText(device.com_port)
         self.table.item(row, COL_CHIP).setText(device.chip_type)
+        fit_table_columns(self.table, self._default_widths)
 
     # ------------------------------------------------------------------
     # Live progress updates (called by MainWindow in response to

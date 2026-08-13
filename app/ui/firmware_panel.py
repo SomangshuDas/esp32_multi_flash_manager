@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -29,7 +28,7 @@ from PySide6.QtWidgets import (
 from app.firmware_manager.auto_detect import scan_firmware_folder
 from app.models.device_model import DeviceConfig
 from app.models.firmware_model import FirmwareEntry
-from app.ui.widgets import make_scrollable
+from app.ui.widgets import fit_table_columns, make_scrollable, prepare_table_for_full_content
 from app.utilities.constants import FIRMWARE_FILE_FILTER
 from app.utilities.helpers import is_valid_hex_address, normalize_hex_address
 
@@ -72,12 +71,13 @@ class FirmwarePanel(QWidget):
         self.table.setHorizontalHeaderLabels(
             ["On", "File", "Address", "Size", "MD5", "Status"]
         )
-        self.table.horizontalHeader().setSectionResizeMode(COL_FILE, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(COL_MD5, QHeaderView.ResizeMode.Interactive)
-        self.table.setColumnWidth(COL_MD5, 220)
+        # Columns are never stretched/shrunk to fit the viewport - long file
+        # names, addresses, and MD5 hashes always get their full width, and
+        # the table's own horizontal scrollbar takes over once that's wider
+        # than the panel instead of Qt eliding any cell's text.
+        prepare_table_for_full_content(self.table)
+        self._min_col_widths = {COL_FILE: 160, COL_MD5: 220}
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.table.setMinimumHeight(120)
         self.table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self.table, 1)
@@ -138,6 +138,7 @@ class FirmwarePanel(QWidget):
             for entry in self._device.firmware:
                 self._append_row(entry)
         self.table.blockSignals(False)
+        fit_table_columns(self.table, self._min_col_widths)
 
     def _append_row(self, entry: FirmwareEntry) -> None:
         row = self.table.rowCount()
@@ -203,6 +204,7 @@ class FirmwarePanel(QWidget):
                 self.table.blockSignals(False)
                 return
 
+        fit_table_columns(self.table, self._min_col_widths)
         self.firmware_changed.emit(self._device.id)
 
     # ------------------------------------------------------------------

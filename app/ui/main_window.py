@@ -131,6 +131,10 @@ class MainWindow(QMainWindow):
         history_dock.setWidget(self.history_panel)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, history_dock)
         self.history_dock = history_dock
+        # Off by default for a cleaner first-run layout; a returning user's
+        # last-saved state (restored afterwards in _restore_window_layout)
+        # still takes precedence if they'd previously left it open.
+        history_dock.setVisible(False)
 
         # Status bar with overall progress
         self.overall_progress = QProgressBar()

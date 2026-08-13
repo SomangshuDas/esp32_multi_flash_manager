@@ -8,9 +8,38 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QWidget
+from PySide6.QtWidgets import QAbstractItemView, QFrame, QHBoxLayout, QHeaderView, QLabel, QScrollArea, QTableWidget, QWidget
 
 from app.utilities.constants import STATUS_COLORS
+
+
+def fit_table_columns(table: QTableWidget, min_widths: dict[int, int] | None = None) -> None:
+    """Grow every column to fit its current header + cell content (never
+    shrink below that) instead of letting Qt silently elide/truncate cell
+    text to whatever width a column happens to have. Once the sum of the
+    column widths exceeds the viewport, the table's own horizontal
+    scrollbar takes over - nothing is ever clipped.
+    """
+    table.resizeColumnsToContents()
+    if min_widths:
+        for column, min_width in min_widths.items():
+            if table.columnWidth(column) < min_width:
+                table.setColumnWidth(column, min_width)
+
+
+def prepare_table_for_full_content(table: QTableWidget) -> None:
+    """One-time setup so a table's columns can freely grow to fit content
+    (see fit_table_columns) and, if that ends up wider than the viewport,
+    both scrollbars appear rather than the table compressing columns.
+    """
+    header = table.horizontalHeader()
+    header.setStretchLastSection(False)
+    for column in range(table.columnCount()):
+        header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+    table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
 
 
 def make_scrollable(content: QWidget, *, horizontal: bool = True, vertical: bool = True) -> QScrollArea:
@@ -38,6 +67,14 @@ class StatusBadge(QWidget):
 
     def __init__(self, status: str = "Waiting", parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # As a table cell widget (rather than a QTableWidgetItem) this badge
+        # is a real child widget composited on top of the row, so it never
+        # picks up the view's item:selected/alternate-row background on its
+        # own. The global QWidget {} rule would otherwise paint it as a
+        # solid opaque box that doesn't turn blue with the rest of a
+        # selected row - so it and its labels are forced transparent here,
+        # letting whatever the row is actually painted with show through.
+        self.setStyleSheet("background-color: transparent;")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(6)
@@ -45,6 +82,7 @@ class StatusBadge(QWidget):
         self._dot = QLabel()
         self._dot.setFixedSize(10, 10)
         self._text = QLabel()
+        self._text.setStyleSheet("background-color: transparent;")
 
         layout.addWidget(self._dot)
         layout.addWidget(self._text)

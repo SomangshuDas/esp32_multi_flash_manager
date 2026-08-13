@@ -10,13 +10,12 @@ from __future__ import annotations
 
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QDialogButtonBox, QLabel, QTableWidget,
+    QDialog, QDialogButtonBox, QLabel, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import Qt
 
 from app.flash_engine.validator import Severity, ValidationReport
-from app.ui.widgets import make_scrollable
+from app.ui.widgets import fit_table_columns, make_scrollable, prepare_table_for_full_content
 
 
 class ValidationReportDialog(QDialog):
@@ -49,15 +48,14 @@ class ValidationReportDialog(QDialog):
             table.setItem(row, 0, severity_item)
             table.setItem(row, 1, QTableWidgetItem(issue.device_name))
             table.setItem(row, 2, QTableWidgetItem(issue.message))
-        table.horizontalHeader().setStretchLastSection(True)
         # Explicit (rather than relying on Qt defaults) so both scrollbars
         # are guaranteed to appear whenever the row/column content is
         # bigger than the table's current viewport, however small the
-        # dialog is resized.
-        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        # dialog is resized. Columns are never stretched/shrunk to fit -
+        # they grow to fit the widest cell (including long messages) so
+        # nothing is ever truncated; the scrollbar takes over instead.
+        prepare_table_for_full_content(table)
+        fit_table_columns(table, min_widths={0: 90, 1: 130, 2: 260})
         table.setMinimumHeight(120)
         layout.addWidget(table, 1)
 

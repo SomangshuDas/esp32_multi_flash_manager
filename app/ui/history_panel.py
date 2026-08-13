@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.history_model import HistoryEntry, export_history_csv
-from app.ui.widgets import make_scrollable
+from app.ui.widgets import fit_table_columns, make_scrollable, prepare_table_for_full_content
 
 
 class HistoryPanel(QWidget):
@@ -43,8 +43,11 @@ class HistoryPanel(QWidget):
             ["Date", "Time", "Device", "Port", "Firmware", "Duration (s)", "Result"]
         )
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Columns are never stretched/shrunk to fit the viewport - long
+        # device/firmware names always get their full width, and the
+        # table's own horizontal scrollbar takes over once that's wider
+        # than the panel instead of Qt eliding any cell's text.
+        prepare_table_for_full_content(self.table)
         self.table.setMinimumHeight(100)
         layout.addWidget(self.table, 1)
 
@@ -63,6 +66,7 @@ class HistoryPanel(QWidget):
             if entry.result == "Failed":
                 item.setForeground(Qt.GlobalColor.red)
             self.table.setItem(row, col, item)
+        fit_table_columns(self.table)
         self.table.scrollToBottom()
 
     def _export_csv(self) -> None:

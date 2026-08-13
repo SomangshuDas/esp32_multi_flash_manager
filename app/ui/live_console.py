@@ -91,10 +91,10 @@ class LiveConsoleWidget(QWidget):
         self.text_edit.setReadOnly(True)
         self.text_edit.setMaximumBlockCount(LIVE_LOG_MAX_LINES)
         self.text_edit.setStyleSheet("font-family: Consolas, 'Courier New', monospace; font-size: 12px;")
-        # Long esptool lines scroll horizontally rather than always wrapping,
-        # so raw log formatting/alignment is preserved and never gets clipped.
-        self.text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Long esptool lines wrap to the widget width so every character is
+        # always visible without needing to scroll sideways.
+        self.text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.text_edit.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         layout.addWidget(self.text_edit, 1)
 
