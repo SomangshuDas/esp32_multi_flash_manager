@@ -175,11 +175,14 @@ firmware bytes ÷ elapsed time), not read from esptool's own byte-level
 telemetry, since esptool does not expose that over a stable machine-
 readable channel. ETA is derived from elapsed-time ÷ percent-complete,
 which is accurate once erase/connect overhead is behind the device but
-can be noisy in the first few seconds. The "Auto Update Checker" menu
-item is present and wired up but intentionally reports "not yet
-configured" rather than phoning home to an update server that doesn't
-exist for this build — wire it to your own release-manifest endpoint
-when you have one.
+can be noisy in the first few seconds. The **Tools → Check for
+Updates...** menu item is fully wired up: it queries the GitHub
+Releases API for `GITHUB_REPO` (see `app/utilities/constants.py`),
+compares the latest tag against `APP_VERSION`, and — if a newer
+release exists — offers to open the browser straight to the installer
+asset matching the current OS. The app never downloads or applies an
+update in place; installing is always left to the OS-native
+installer/DMG/AppImage flow.
 
 ---
 

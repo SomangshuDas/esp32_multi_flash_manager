@@ -133,7 +133,7 @@ window you can:
 baud rate, flash mode, or any of the boolean flags) across **All
 devices** or just the **currently selected** ones, in one action — handy
 when you realize halfway through setup that every board should use
-115200 baud instead of the default.
+230400 baud instead of the default 115200.
 
 ## 9. Firmware Profiles
 

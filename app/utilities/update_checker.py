@@ -32,10 +32,21 @@ _REQUEST_TIMEOUT_SECONDS = 6
 
 # Asset-name patterns to try, in order, for each platform. The first
 # release asset whose filename matches one of these wins.
+#
+# The proper installer (Setup .exe / .dmg / .AppImage) is listed before the
+# generic OS-name keywords on purpose: release.yml uploads BOTH the raw
+# portable PyInstaller build (e.g. "ESP32MultiFlashManager-windows.exe")
+# and the real installer (e.g. "ESP32MultiFlashManagerSetup-0.4.0.exe") for
+# every platform. A generic keyword like "windows" or "macos" matches the
+# portable asset's filename too, so checking it first would silently hand
+# the user the portable build instead of the installer. Installer-specific
+# patterns are checked first so the installer always wins when both exist;
+# the generic keywords remain only as a fallback for releases that shipped
+# just the portable build.
 _ASSET_PATTERNS = {
-    "win32": (r"windows", r"win64", r"win", r"setup.*\.exe$", r"\.exe$"),
-    "darwin": (r"macos", r"mac", r"\.dmg$", r"\.pkg$"),
-    "linux": (r"linux", r"\.appimage$", r"\.deb$", r"\.tar\.gz$"),
+    "win32": (r"setup.*\.exe$", r"windows", r"win64", r"win", r"\.exe$"),
+    "darwin": (r"\.dmg$", r"\.pkg$", r"macos", r"mac"),
+    "linux": (r"\.appimage$", r"\.deb$", r"linux", r"\.tar\.gz$"),
 }
 
 
@@ -95,9 +106,15 @@ def check_for_update() -> UpdateInfo | None:
         logger.warning("Update check failed: %s", exc)
         return None
 
-    remote_version = str(payload.get("tag_name", "")).strip()
-    if not remote_version or not is_newer(remote_version):
+    raw_tag = str(payload.get("tag_name", "")).strip()
+    if not raw_tag or not is_newer(raw_tag):
         return None
+
+    # GitHub tag names are "v"-prefixed (e.g. "v0.4.0"). Callers that display
+    # this value prepend their own "v" (e.g. f"v{info.version}"), so strip
+    # the prefix here rather than storing it raw -- otherwise the UI ends up
+    # showing a doubled "vv0.4.0".
+    remote_version = raw_tag.lstrip("vV")
 
     page_url = payload.get("html_url", _RELEASES_PAGE_URL)
     asset_url, asset_name = _pick_asset(payload.get("assets", []) or [])
