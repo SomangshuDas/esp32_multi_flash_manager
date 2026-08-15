@@ -184,8 +184,13 @@ OS).
   [`packaging/windows/installer.iss`](../packaging/windows/installer.iss)
   with [Inno Setup 6](https://jrsoftware.org/isinfo.php) into
   `dist/installer/ESP32MultiFlashManagerSetup-<version>.exe` — a Setup.exe
-  with Start Menu/Desktop shortcuts, an uninstaller, and an opt-out
-  `.efmproj` file association written to `HKCU\Software\Classes`.
+  with Start Menu/Desktop shortcuts, an uninstaller, an opt-out
+  `.efmproj` file association written to `HKCU\Software\Classes`, and a
+  post-install "View what's new" checkbox that opens the GitHub Releases
+  page (there's no bundled changelog file, so this is always the current
+  one). It also drops `install_marker.txt` next to the exe so
+  `app/utilities/update_checker.py` can tell this was an installed build
+  rather than a portable one the next time it checks for updates.
 
   ```powershell
   .\packaging\windows\build_installer.ps1 -Version 1.0.0

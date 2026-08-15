@@ -1,0 +1,10 @@
+This file marks ESP32 Multi Flash Manager as an installed build (as
+opposed to a portable single-file executable). Its presence next to
+ESP32MultiFlashManager.exe is checked at runtime by
+app/utilities/update_checker.py (is_portable_build()) so that "Check for
+Updates" offers the installer asset from future releases instead of the
+portable one.
+
+Do not delete this file manually -- the uninstaller removes it
+automatically. If you copy the .exe elsewhere without this file, the app
+will correctly treat that copy as portable.

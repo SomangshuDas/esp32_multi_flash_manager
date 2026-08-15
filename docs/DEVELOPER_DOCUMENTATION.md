@@ -55,8 +55,10 @@ This document is for engineers extending or maintaining the codebase.
 | `app/workers/flash_worker.py` | `QThread` that drives one device's `esptool` subprocess |
 | `app/workers/port_watcher.py` | `QTimer`-polled COM port connect/disconnect detection |
 | `app/logging_setup/logger.py` | Rotating file handlers: application/flash/error/debug logs |
-| `app/utilities/constants.py` | Every shared literal (chip lists, baud rates, status strings, colors, ...) |
+| `app/utilities/constants.py` | Every shared literal (chip lists, baud rates, status strings, colors, shortcuts, settings keys, ...) |
 | `app/utilities/helpers.py` | Pure functions: MD5, human-readable sizes/durations, hex address validation, ... |
+| `app/utilities/update_checker.py` | GitHub Releases polling + portable-vs-installer asset selection (`is_portable_build()`) |
+| `app/ui/lock_overlay.py` | `LockOverlay`: the full-window "Interface Locked" widget used by Tools → Lock Interface |
 | `app/ui/*.py` | Qt widgets/dialogs — see file docstrings for each |
 
 ## 3. Extending chip / flash-parameter support
@@ -179,10 +181,49 @@ can be noisy in the first few seconds. The **Tools → Check for
 Updates...** menu item is fully wired up: it queries the GitHub
 Releases API for `GITHUB_REPO` (see `app/utilities/constants.py`),
 compares the latest tag against `APP_VERSION`, and — if a newer
-release exists — offers to open the browser straight to the installer
-asset matching the current OS. The app never downloads or applies an
-update in place; installing is always left to the OS-native
-installer/DMG/AppImage flow.
+release exists — offers to open the browser straight to the release
+asset matching both the current OS *and* the current build kind
+(portable vs. installer, via `update_checker.is_portable_build()`). The
+app never downloads or applies an update in place; installing is always
+left to the OS-native installer/DMG/AppImage flow.
+
+## 11. Factory Batch Flash mode & Interface Lock
+
+**Factory Batch Flash mode** (`MainWindow._apply_factory_batch_mode`,
+View → Factory Batch Flash Mode / `Ctrl+Shift+F`) is a pure layout
+toggle, not a separate code path: it pulls the same `device_panel` and
+`settings_tabs` (Firmware + Device Settings) widgets out of
+`main_splitter` and re-adds them in the opposite order with the
+splitter's orientation flipped, so the centralised settings sit above
+the device list instead of beside it. Because it's the same widgets, the
+same controllers, and the same `_upload_device_ids()` upload path, every
+existing feature (auto-detect, the pre-upload validation/warning
+dialog, live per-device progress, history) keeps working with zero
+duplicated logic. The mode's on/off state is persisted via
+`AppSettings` under `SETTINGS_KEY_FACTORY_BATCH_MODE` and restored at
+startup.
+
+`Devices → Assign Firmware Set to Devices...` (`Ctrl+Shift+A`,
+`MainWindow._on_assign_firmware_set`) is the companion action for
+stamping one imported firmware folder across many devices in one step:
+it reuses `firmware_manager.auto_detect.scan_firmware_folder()` for the
+scan and the new `DeviceController.apply_firmware_to_devices()` for the
+assignment, which gives each target device its own
+`FirmwareEntry.duplicate()`s so later per-device address edits never
+cross-contaminate another device's copy.
+
+**Interface Lock** (`Tools → Lock Interface` / `Ctrl+Shift+L`) disables
+the menu bar, every toolbar, every dock widget, the central widget, and
+every `QAction` created via `MainWindow._add_action` (tracked in
+`self._all_actions` — disabling the container widgets alone does not
+stop a `QAction`'s window-level keyboard shortcut from still firing), and
+raises `app/ui/lock_overlay.py::LockOverlay` on top of the whole window.
+The unlock key is never stored in plaintext: `Tools → Set Interface Lock
+Key...` hashes it with SHA-256 (`hashlib.sha256`) before writing it to
+`AppSettings` under `SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH`, and
+`_on_unlock_attempt()` compares hashes. `closeEvent()` refuses to close
+the window while `lock_overlay.isVisible()`, so the lock can't be
+bypassed with the OS window-manager's close button.
 
 ---
 

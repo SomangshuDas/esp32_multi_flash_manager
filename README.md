@@ -66,6 +66,21 @@ implementation for correctness.
   instead of a fixed layout.
 - **Dark and light themes**, dockable/resizable panels, persistent window
   layout, keyboard shortcuts, and right-click context menus.
+- **Factory Batch Flash mode** (`Ctrl+Shift+F`). Re-stacks the window for
+  bench/production use: centralised Firmware + Device Settings on top,
+  the full device list underneath. Pair it with **Assign Firmware Set to
+  Devices...** (`Ctrl+Shift+A`) to stamp one imported firmware folder
+  across every selected device in one step — every other feature
+  (auto-detect, the pre-upload warning page, live progress) works exactly
+  as it does in the normal layout.
+- **Interface Lock** (`Ctrl+Shift+L`). Freezes the whole window behind a
+  key-protected prompt so a running batch on a shared bench PC can't be
+  bumped or cancelled by a passer-by; the key is stored as a SHA-256 hash,
+  never in plaintext.
+- **Update checker** (`Tools → Check for Updates...`) that's aware of how
+  *this* copy was obtained — an installed build is offered the next
+  installer, a portable build is offered the next portable executable —
+  and always leaves the actual install step to the OS-native installer.
 - **Rotating log files** (application / flash / error / debug), so nothing
   is ever silently lost, and the app is built to *never crash* — every
   exception is caught, logged, and shown to the user in plain language.

@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.5.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -122,3 +122,20 @@ LIVE_LOG_MAX_LINES = 10000
 # Update checking (GitHub Releases)
 # --------------------------------------------------------------------------
 GITHUB_REPO = "SomangshuDas/esp32_multi_flash_manager"
+
+# Dropped next to the executable by an OS installer (Windows Setup.exe) so
+# a frozen build can tell "installed" apart from "portable" at runtime.
+# Its presence is what lets update_checker.py offer an installer asset to
+# installed users and a portable asset to portable users instead of always
+# guessing. See update_checker.py's module docstring for the full picture.
+INSTALL_MARKER_FILENAME = "install_marker.txt"
+
+# --------------------------------------------------------------------------
+# Factory Batch Flash mode + Interface Lock (app/ui/main_window.py)
+# --------------------------------------------------------------------------
+FACTORY_BATCH_MODE_SHORTCUT = "Ctrl+Shift+F"
+ASSIGN_FIRMWARE_SET_SHORTCUT = "Ctrl+Shift+A"
+INTERFACE_LOCK_SHORTCUT = "Ctrl+Shift+L"
+
+SETTINGS_KEY_FACTORY_BATCH_MODE = "factory_batch_mode_enabled"
+SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH = "interface_lock_key_hash"

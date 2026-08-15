@@ -196,7 +196,42 @@ default baud rate, and default flash mode for new devices, and gives you
 a one-click **Open Logs Folder** button if you need to send logs to
 support.
 
-## 14. Keyboard shortcuts
+## 14. Factory Batch Flash mode
+
+**View → Factory Batch Flash Mode** (`Ctrl+Shift+F`) is built for the
+"one firmware set, many identical devices" workflow common on a
+manufacturing bench. Turning it on re-stacks the main window: the
+**centralised Firmware + Device Settings tabs move to the top**, with
+the full device list underneath — instead of side-by-side. Every other
+feature works exactly as before in this layout: auto-detect, the
+pre-upload warning page, live per-device progress, history, everything.
+Turn it off the same way (`Ctrl+Shift+F` again, or un-check it in the
+View menu) to go back to the normal side-by-side layout; your choice is
+remembered the next time you launch the app.
+
+The companion action, **Devices → Assign Firmware Set to Devices...**
+(`Ctrl+Shift+A`), imports one firmware folder with the same auto-detect
+used on the Firmware tab and applies the resulting `.bin` + address list
+to every currently selected device (or to all devices, if you say so
+when prompted) in a single step — no more re-importing the same folder
+once per board.
+
+## 15. Locking the interface
+
+**Tools → Lock Interface** (`Ctrl+Shift+L`) freezes the entire window —
+menus, toolbars, device list, firmware/settings panels, everything —
+behind a full-screen "Interface Locked" prompt, so you can walk away
+from a running batch on a shared bench PC without someone bumping a
+setting or cancelling an upload.
+
+The first time you lock, you'll be asked to set an **unlock key**
+(**Tools → Set Interface Lock Key...**, entered twice to confirm). The
+key itself is never stored — only its hash — so re-locking later just
+asks for that same key back. Closing the window (including the OS
+close button) is blocked while locked; unlock first, then exit normally
+if you need to.
+
+## 16. Keyboard shortcuts
 
 | Shortcut | Action |
 |---|---|
@@ -206,13 +241,16 @@ support.
 | `Ctrl+Shift+S` | Save Project As |
 | `Ctrl+D` | Add Device |
 | `Ctrl+B` | Batch Edit |
+| `Ctrl+Shift+A` | Assign Firmware Set to Devices |
 | `F5` | Upload Selected |
 | `Ctrl+F5` | Upload All |
 | `Esc` | Cancel All |
 | `Ctrl+T` | Toggle Dark/Light Theme |
+| `Ctrl+Shift+F` | Toggle Factory Batch Flash Mode |
+| `Ctrl+Shift+L` | Lock Interface |
 | `Ctrl+Q` | Exit |
 
-## 15. Troubleshooting
+## 17. Troubleshooting
 
 - **"esptool could not be launched"** — make sure `pip install -r
   requirements.txt` succeeded and that `python -m esptool version` works
@@ -224,6 +262,10 @@ support.
 - **Duplicate port error at upload time** — two devices in your
   selection share the same port; only one can use it at once. Fix one
   of them in the Device Settings tab.
+- **Forgot the interface lock key** — there is no recovery/reset path by
+  design (that's the point of a lock). You'll need to close the app from
+  the OS (e.g. Task Manager / `kill`, losing unsaved project changes) and
+  relaunch it.
 - Logs are in the app's per-OS data folder — `Tools → Settings → Open
   Logs Folder` opens it directly on any platform. If you need the path
   manually: `%APPDATA%\ESP32MultiFlashManager\logs\` on Windows,

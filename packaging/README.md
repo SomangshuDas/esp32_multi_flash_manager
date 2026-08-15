@@ -66,6 +66,8 @@ normal, professional installer for that OS:
 | `.efmproj` file association | ✅ | ✅ | ✅ (after desktop integration — see below) |
 | Closes a running instance before upgrade | ✅ | — | — |
 | Clean uninstall (removes shortcuts + association) | ✅ (Add/Remove Programs) | ✅ (drag `.app` to Trash) | ✅ (delete the `.AppImage`) |
+| Post-install "View what's new" checkbox (opens GitHub Releases) | ✅ | — | — |
+| Marks itself as an installed build for the in-app updater | ✅ (`install_marker.txt`) | — (always treated as portable) | — (always treated as portable) |
 
 ## Prerequisites
 
@@ -91,6 +93,21 @@ environment.
 - **Linux**: delete the `.AppImage` file. If you integrated it with
   AppImageLauncher, also remove it from there (right-click the app in your
   launcher → Remove).
+
+## Portable vs. installed updates
+
+`Tools → Check for Updates...` inside the app fetches the latest GitHub
+Release and offers a download link, but it needs to know which *kind* of
+build it's running as to offer the right asset:
+
+- The **Windows installer** drops `install_marker.txt` next to the exe at
+  install time, so a future "Check for Updates" run on that machine
+  offers the installer asset (`ESP32MultiFlashManagerSetup-x.y.z.exe`)
+  from the newer release, not the raw portable exe.
+- Anything else — the raw portable exe, the macOS `.dmg`/`.app`, the
+  Linux `.AppImage`, or running straight from source — has no marker
+  file, so it's treated as portable and offered the portable asset for
+  that platform instead.
 
 ## Known limitations, honestly
 

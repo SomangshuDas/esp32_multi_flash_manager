@@ -28,6 +28,16 @@
 ;     installing side-by-side).
 ;   - Installs a clean uninstaller (Add/Remove Programs + Start Menu entry)
 ;     that also removes the file association and Start Menu group.
+;   - After installation, offers a "View what's new" checkbox (unchecked
+;     by default) on the final wizard page. There is no bundled changelog
+;     file -- checking it just opens the GitHub Releases page in the
+;     user's browser, since that's always the authoritative, up-to-date
+;     changelog. Handled by the [Run] entry below.
+;   - Drops a small install_marker.txt file next to the exe so a frozen
+;     build can tell it was installed (vs. run as a bare portable exe).
+;     app/utilities/update_checker.py reads this at runtime to decide
+;     whether "Check for Updates" should offer the installer asset or the
+;     portable asset for the next release.
 ;
 ; AppVersion is passed in from CI via /DAppVersion=x.y.z so it never drifts
 ; from the git tag; it defaults to app/utilities/constants.py's APP_VERSION
@@ -42,6 +52,7 @@
 #define AppPublisher "Somangshu Das"
 #define AppURL "https://github.com/SomangshuDas/esp32_multi_flash_manager"
 #define AppSupportURL "https://github.com/SomangshuDas/esp32_multi_flash_manager/issues"
+#define AppReleasesURL "https://github.com/SomangshuDas/esp32_multi_flash_manager/releases"
 #define ProjectExt ".efmproj"
 #define ProgId "ESP32MultiFlashManager.Project"
 
@@ -101,6 +112,7 @@ Source: "..\..\dist\ESP32MultiFlashManager.exe"; DestDir: "{app}"; Flags: ignore
 Source: "..\..\resources\icons\app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion; DestName: "README.txt"
 Source: "..\..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion; DestName: "LICENSE.txt"
+Source: "install_marker.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Comment: "Launch {#AppName}"
@@ -128,11 +140,13 @@ Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}\SupportedTypes"
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\README.txt"; Description: "View the README"; Flags: postinstall shellexec skipifsilent unchecked
+Filename: "{#AppReleasesURL}"; Description: "View what's new (opens the GitHub Releases page in your browser)"; Flags: postinstall shellexec skipifsilent unchecked
 
 [UninstallDelete]
 Type: files; Name: "{app}\app_icon.ico"
 Type: files; Name: "{app}\LICENSE.txt"
 Type: files; Name: "{app}\README.txt"
+Type: files; Name: "{app}\install_marker.txt"
 
 [Code]
 { Explorer needs a nudge to notice a new/changed file association right

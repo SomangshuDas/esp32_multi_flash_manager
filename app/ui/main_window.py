@@ -18,6 +18,7 @@ wiring + user interaction.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QUrl
@@ -43,6 +44,7 @@ from PySide6.QtCore import Qt
 from app.controllers.device_controller import DeviceController
 from app.controllers.flash_controller import FlashController
 from app.controllers.project_controller import ProjectController
+from app.firmware_manager.auto_detect import scan_firmware_folder
 from app.flash_engine.validator import validate_devices
 from app.logging_setup.logger import get_logger
 from app.project_manager.project_io import clear_recent_projects, get_recent_projects
@@ -53,12 +55,23 @@ from app.ui.device_settings_widget import DeviceSettingsWidget
 from app.ui.firmware_panel import FirmwarePanel
 from app.ui.history_panel import HistoryPanel
 from app.ui.live_console import LiveConsoleWidget
+from app.ui.lock_overlay import LockOverlay
 from app.ui.profile_dialog import ProfileDialog
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.theme import stylesheet_for
 from app.ui.validation_dialog import ValidationReportDialog
 from app.utilities.app_settings import get_settings
-from app.utilities.constants import APP_NAME, APP_VERSION, LIVE_LOG_MAX_LINES, PROJECT_FILE_FILTER
+from app.utilities.constants import (
+    APP_NAME,
+    APP_VERSION,
+    ASSIGN_FIRMWARE_SET_SHORTCUT,
+    FACTORY_BATCH_MODE_SHORTCUT,
+    INTERFACE_LOCK_SHORTCUT,
+    LIVE_LOG_MAX_LINES,
+    PROJECT_FILE_FILTER,
+    SETTINGS_KEY_FACTORY_BATCH_MODE,
+    SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH,
+)
 from app.utilities.helpers import resource_path, safe_filename
 from app.utilities.update_checker import check_for_update
 from app.workers.port_watcher import PortWatcher
@@ -85,15 +98,27 @@ class MainWindow(QMainWindow):
         self._device_log_buffers: dict[str, list[str]] = {}
         self._connected_ports: set[str] = set()
         self._had_saved_geometry = False
+        self._factory_batch_mode = False
+        self._all_actions: list[QAction] = []
 
         self._build_ui()
         self._build_menus_and_toolbar()
         self._wire_signals()
         self._apply_theme(self.settings.value("theme", "dark"))
 
+        # Interface Lock overlay: created hidden, covers the whole window
+        # (see resizeEvent) only while locked.
+        self.lock_overlay = LockOverlay(self)
+        self.lock_overlay.unlock_attempted.connect(self._on_unlock_attempt)
+        self.lock_overlay.hide()
+
         self.port_watcher.start()
         self._refresh_dashboard()
         self._restore_window_layout()
+        self._apply_factory_batch_mode(
+            bool(self.settings.value(SETTINGS_KEY_FACTORY_BATCH_MODE, False, type=bool)),
+            persist=False,
+        )
 
     # ------------------------------------------------------------------
     # UI construction
@@ -107,17 +132,27 @@ class MainWindow(QMainWindow):
         central_layout.addWidget(self.dashboard)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.main_splitter = splitter
 
         self.device_panel = DevicePanel()
-        splitter.addWidget(self.device_panel)
 
         right_tabs = QTabWidget()
+        self.settings_tabs = right_tabs
         self.firmware_panel = FirmwarePanel()
         self.settings_widget = DeviceSettingsWidget()
         right_tabs.addTab(self.firmware_panel, "Firmware")
         right_tabs.addTab(self.settings_widget, "Device Settings")
-        splitter.addWidget(right_tabs)
 
+        # Default (non-Factory-Batch) layout: device list on the left,
+        # centralised Firmware + Device Settings tabs on the right. Factory
+        # Batch Flash mode (View menu / Ctrl+Shift+F) re-stacks these same
+        # two widgets vertically instead -- settings on top, devices below
+        # -- via _apply_factory_batch_mode(); no widget is duplicated or
+        # rebuilt, so every existing feature (auto-detect, validation
+        # warnings, live progress, ...) keeps working unchanged in either
+        # layout.
+        splitter.addWidget(self.device_panel)
+        splitter.addWidget(right_tabs)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 1)
         central_layout.addWidget(splitter, 1)
@@ -166,6 +201,11 @@ class MainWindow(QMainWindow):
         self._add_action(devices_menu, "Add Device", "Ctrl+D", self.device_panel.add_device_requested.emit)
         self._add_action(devices_menu, "Batch Edit...", "Ctrl+B", self._on_batch_edit)
         self._add_action(devices_menu, "Firmware Profiles...", "", self._on_open_profiles)
+        devices_menu.addSeparator()
+        self._add_action(
+            devices_menu, "Assign Firmware Set to Devices...", ASSIGN_FIRMWARE_SET_SHORTCUT,
+            self._on_assign_firmware_set,
+        )
 
         # ---- Flash menu ----
         flash_menu = menu_bar.addMenu("&Flash")
@@ -180,11 +220,19 @@ class MainWindow(QMainWindow):
         view_menu = menu_bar.addMenu("&View")
         self._add_action(view_menu, "Toggle Dark/Light Theme", "Ctrl+T", self._toggle_theme)
         view_menu.addAction(self.history_dock.toggleViewAction())
+        view_menu.addSeparator()
+        self.factory_batch_mode_action = self._add_action(
+            view_menu, "Factory Batch Flash Mode", FACTORY_BATCH_MODE_SHORTCUT,
+            self._on_toggle_factory_batch_mode, checkable=True,
+        )
 
         # ---- Tools menu ----
         tools_menu = menu_bar.addMenu("&Tools")
         self._add_action(tools_menu, "Settings...", "", self._on_open_settings)
         self._add_action(tools_menu, "Check for Updates...", "", self._on_check_updates)
+        tools_menu.addSeparator()
+        self._add_action(tools_menu, "Set Interface Lock Key...", "", self._on_set_lock_key)
+        self._add_action(tools_menu, "Lock Interface", INTERFACE_LOCK_SHORTCUT, self._on_lock_interface)
 
         # ---- Help menu ----
         help_menu = menu_bar.addMenu("&Help")
@@ -201,12 +249,20 @@ class MainWindow(QMainWindow):
         self._add_action(toolbar, "Retry Failed", "", self._on_retry_failed)
         self.addToolBar(toolbar)
 
-    def _add_action(self, target, text: str, shortcut: str, slot) -> QAction:
+    def _add_action(self, target, text: str, shortcut: str, slot, checkable: bool = False) -> QAction:
         action = QAction(text, self)
         if shortcut:
             action.setShortcut(QKeySequence(shortcut))
-        action.triggered.connect(slot)
+        if checkable:
+            action.setCheckable(True)
+            action.toggled.connect(slot)
+        else:
+            action.triggered.connect(slot)
         target.addAction(action)
+        # Tracked so Interface Lock can disable every shortcut/menu action
+        # in one pass (a disabled QMenuBar alone does not stop a QAction's
+        # window-level keyboard shortcut from still firing).
+        self._all_actions.append(action)
         return action
 
     # ------------------------------------------------------------------
@@ -338,6 +394,183 @@ class MainWindow(QMainWindow):
             if selected:
                 self._on_device_selected(selected[0])
             self.project_controller.mark_dirty()
+
+    # ------------------------------------------------------------------
+    # Factory Batch Flash mode
+    # ------------------------------------------------------------------
+    def _on_toggle_factory_batch_mode(self, checked: bool) -> None:
+        self._apply_factory_batch_mode(checked, persist=True)
+
+    def _apply_factory_batch_mode(self, enabled: bool, persist: bool) -> None:
+        """
+        Re-stack the same Device panel / Firmware+Device-Settings tabs the
+        normal layout already uses: centralised settings on top, the
+        device list underneath, instead of side-by-side. Every feature
+        (auto-detect on import, pre-upload validation/warning page, live
+        progress, history, ...) is unchanged -- Factory Batch Flash mode
+        only changes which of the two panels the operator sees first when
+        stamping one firmware set across a whole bench of devices.
+        """
+        self._factory_batch_mode = enabled
+        self.main_splitter.setOrientation(
+            Qt.Orientation.Vertical if enabled else Qt.Orientation.Horizontal
+        )
+
+        # QSplitter has no "insert first" -- pull both widgets out and add
+        # them back in the order this mode wants.
+        device_panel = self.device_panel
+        settings_tabs = self.settings_tabs
+        for widget in (device_panel, settings_tabs):
+            widget.setParent(None)
+        if enabled:
+            self.main_splitter.addWidget(settings_tabs)
+            self.main_splitter.addWidget(device_panel)
+            self.main_splitter.setStretchFactor(0, 1)
+            self.main_splitter.setStretchFactor(1, 2)
+        else:
+            self.main_splitter.addWidget(device_panel)
+            self.main_splitter.addWidget(settings_tabs)
+            self.main_splitter.setStretchFactor(0, 2)
+            self.main_splitter.setStretchFactor(1, 1)
+
+        if hasattr(self, "factory_batch_mode_action"):
+            self.factory_batch_mode_action.blockSignals(True)
+            self.factory_batch_mode_action.setChecked(enabled)
+            self.factory_batch_mode_action.blockSignals(False)
+
+        self.statusBar().showMessage(
+            "Factory Batch Flash Mode enabled — centralised settings on top, devices below."
+            if enabled else "Factory Batch Flash Mode disabled.",
+            4000,
+        )
+        if persist:
+            self.settings.setValue(SETTINGS_KEY_FACTORY_BATCH_MODE, enabled)
+
+    def _on_assign_firmware_set(self) -> None:
+        """
+        Import one firmware folder (same auto-detect used everywhere else
+        in the app) and stamp an independent copy of the resulting BIN/
+        address list onto many devices at once -- the core Factory Batch
+        Flash workflow: one firmware set, a whole bench of identical
+        target devices.
+        """
+        folder = QFileDialog.getExistingDirectory(self, "Select Firmware Folder")
+        if not folder:
+            return
+        entries = scan_firmware_folder(folder)
+        if not entries:
+            QMessageBox.information(self, "Assign Firmware Set", "No .bin files were found in that folder.")
+            return
+
+        selected_ids = self.device_panel.selected_device_ids()
+        all_ids = [d.id for d in self.device_controller.devices()]
+        if not all_ids:
+            QMessageBox.information(self, "Assign Firmware Set", "Add at least one device first.")
+            return
+
+        target_ids = all_ids
+        if selected_ids and len(selected_ids) != len(all_ids):
+            reply = QMessageBox.question(
+                self, "Assign Firmware Set",
+                f"Apply the {len(entries)} firmware file(s) from\n{folder}\n\n"
+                f"to the {len(selected_ids)} selected device(s) only? "
+                "Choose No to apply to all devices instead.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            target_ids = selected_ids if reply == QMessageBox.StandardButton.Yes else all_ids
+        else:
+            reply = QMessageBox.question(
+                self, "Assign Firmware Set",
+                f"Apply the {len(entries)} firmware file(s) from\n{folder}\n\nto all {len(all_ids)} device(s)?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        updated = self.device_controller.apply_firmware_to_devices(target_ids, entries)
+        self.device_panel.rebuild(self.device_controller.devices())
+        current = self.device_panel.selected_device_ids()
+        if current:
+            self._on_device_selected(current[0])
+        self.project_controller.mark_dirty()
+        self.statusBar().showMessage(
+            f"Applied firmware set ({len(entries)} file(s)) to {updated} device(s).", 4000,
+        )
+
+    # ------------------------------------------------------------------
+    # Interface lock
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _hash_lock_key(key: str) -> str:
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+    def _on_set_lock_key(self) -> bool:
+        """Prompt for a new unlock key (entered twice) and store its hash.
+        Returns True if a key was set."""
+        key, ok = QInputDialog.getText(
+            self, "Set Interface Lock Key", "New unlock key:", QLineEdit.EchoMode.Password,
+        )
+        if not ok or not key:
+            return False
+        confirm, ok = QInputDialog.getText(
+            self, "Set Interface Lock Key", "Confirm unlock key:", QLineEdit.EchoMode.Password,
+        )
+        if not ok or confirm != key:
+            QMessageBox.warning(self, "Set Interface Lock Key", "Keys did not match. Not changed.")
+            return False
+        self.settings.setValue(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH, self._hash_lock_key(key))
+        QMessageBox.information(self, "Set Interface Lock Key", "Interface lock key saved.")
+        return True
+
+    def _on_lock_interface(self) -> None:
+        if not self.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH):
+            QMessageBox.information(
+                self, "Lock Interface",
+                "No unlock key is set yet. Set one now, then Lock Interface again.",
+            )
+            self._on_set_lock_key()
+            return
+
+        self.menuBar().setEnabled(False)
+        self.centralWidget().setEnabled(False)
+        for dock in self.findChildren(QDockWidget):
+            dock.setEnabled(False)
+        for toolbar in self.findChildren(QToolBar):
+            toolbar.setEnabled(False)
+        for action in self._all_actions:
+            action.setEnabled(False)
+        self._position_lock_overlay()
+        self.lock_overlay.reset_and_show()
+        self.statusBar().showMessage("Interface locked.", 4000)
+
+    def _on_unlock_attempt(self, entered_key: str) -> None:
+        stored_hash = self.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH)
+        if not entered_key or self._hash_lock_key(entered_key) != stored_hash:
+            self.lock_overlay.show_error()
+            return
+
+        self.lock_overlay.hide()
+        self.menuBar().setEnabled(True)
+        self.centralWidget().setEnabled(True)
+        for dock in self.findChildren(QDockWidget):
+            dock.setEnabled(True)
+        for toolbar in self.findChildren(QToolBar):
+            toolbar.setEnabled(True)
+        for action in self._all_actions:
+            action.setEnabled(True)
+        self.statusBar().showMessage("Interface unlocked.", 3000)
+
+    def _position_lock_overlay(self) -> None:
+        self.lock_overlay.setGeometry(0, 0, self.width(), self.height())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        if hasattr(self, "lock_overlay") and self.lock_overlay.isVisible():
+            self._position_lock_overlay()
 
     # ------------------------------------------------------------------
     # Flashing actions
@@ -710,6 +943,14 @@ class MainWindow(QMainWindow):
             self.showMaximized()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if self.lock_overlay.isVisible():
+            # Refuse to close while locked -- otherwise Alt+F4 / the
+            # window-manager close button would bypass the lock entirely.
+            # Unlock first (Ctrl+Shift+L key prompt), then Exit normally.
+            event.ignore()
+            self.statusBar().showMessage("Unlock the interface before closing.", 4000)
+            return
+
         if self.flash_controller.any_busy():
             confirm = QMessageBox.question(
                 self, "Flashing In Progress",

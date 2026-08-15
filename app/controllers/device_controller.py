@@ -112,6 +112,27 @@ class DeviceController(QObject):
                 self.device_updated.emit(device.id)
         logger.info("Batch-applied %s=%s to %d selected device(s)", predicate_field, value, len(device_ids))
 
+    def apply_firmware_to_devices(self, device_ids: list[str], entries: list) -> int:
+        """
+        Factory Batch Flash helper: replace `device_ids`' firmware lists
+        with independent copies of the same `entries` (as produced by
+        `scan_firmware_folder()`), so one imported "firmware set" can be
+        stamped onto many devices in one step instead of re-importing per
+        device. Each device gets its own `FirmwareEntry.duplicate()`s
+        (fresh ids) so editing one device's addresses later never mutates
+        another device's copy. Returns the number of devices updated.
+        """
+        updated = 0
+        for device_id in device_ids:
+            device = self.get_device(device_id)
+            if device is None:
+                continue
+            device.firmware = [entry.duplicate() for entry in entries]
+            self.device_updated.emit(device.id)
+            updated += 1
+        logger.info("Applied firmware set (%d file(s)) to %d device(s)", len(entries), updated)
+        return updated
+
     # ------------------------------------------------------------------
     def find_duplicate_ports(self) -> dict[str, list[str]]:
         """Return {com_port: [device names]} for every port used more than once."""
