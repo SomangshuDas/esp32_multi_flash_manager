@@ -65,18 +65,27 @@ implementation for correctness.
   be resized by dragging its header, so the table fits your workflow
   instead of a fixed layout.
 - **Dark and light themes**, dockable/resizable panels, persistent window
-  layout, keyboard shortcuts, and right-click context menus.
-- **Factory Batch Flash mode** (`Ctrl+Shift+F`). Re-stacks the window for
-  bench/production use: centralised Firmware + Device Settings on top,
-  the full device list underneath. Pair it with **Assign Firmware Set to
-  Devices...** (`Ctrl+Shift+A`) to stamp one imported firmware folder
-  across every selected device in one step — every other feature
-  (auto-detect, the pre-upload warning page, live progress) works exactly
-  as it does in the normal layout.
-- **Interface Lock** (`Ctrl+Shift+L`). Freezes the whole window behind a
-  key-protected prompt so a running batch on a shared bench PC can't be
-  bumped or cancelled by a passer-by; the key is stored as a SHA-256 hash,
-  never in plaintext.
+  layout, user-customisable keyboard shortcuts (`Tools → Keyboard
+  Shortcuts...`, with duplicate-assignment detection), and right-click
+  context menus.
+- **Assign Firmware Set to Devices...** (`Devices` menu). Stamp one
+  imported firmware folder across all devices, or just the ones you've
+  selected, in one step — every other feature (auto-detect, the
+  pre-upload warning page, live progress) applies exactly as it does
+  when importing firmware per-device.
+- **Built-in Serial Monitor** (`Tools → Open Serial Monitor...`, or
+  right-click a device → **Open Serial Monitor**). Open any number of
+  ports at once, each in its own window, with baud-rate selection,
+  auto-scroll, pause, search, save-to-file, and a send line — mirrors
+  the Logs console's controls. Refuses to open a port that's mid-upload,
+  and the upload validator refuses to start a flash on a port that
+  already has a Serial Monitor connected, telling you to close it first.
+- **Interface Lock** (`Tools → Lock Interface`). Freezes the whole window
+  behind a key-protected prompt so a running batch on a shared bench PC
+  can't be bumped or cancelled by a passer-by; the key is stored as a
+  SHA-256 hash, never in plaintext. Refuses to lock while a Logs or
+  Serial Monitor window is still open, and tells you which one(s) to
+  close first.
 - **Update checker** (`Tools → Check for Updates...`) that's aware of how
   *this* copy was obtained — an installed build is offered the next
   installer, a portable build is offered the next portable executable —

@@ -50,7 +50,11 @@ class ValidationReport:
         self.issues.append(ValidationIssue(Severity.WARNING, device_name, message))
 
 
-def validate_devices(devices: list[DeviceConfig], connected_ports: set[str] | None = None) -> ValidationReport:
+def validate_devices(
+    devices: list[DeviceConfig],
+    connected_ports: set[str] | None = None,
+    monitor_ports: set[str] | None = None,
+) -> ValidationReport:
     """
     Validate a list of devices that are about to be flashed together.
     Returns a ValidationReport containing every issue found; the caller
@@ -62,10 +66,18 @@ def validate_devices(devices: list[DeviceConfig], connected_ports: set[str] | No
     it in lets the caller flag "port not connected" immediately when
     Upload is clicked, instead of only finding out ~10-30 seconds later
     when esptool's own connect-retry loop finally gives up.
+
+    `monitor_ports` is the set of serial ports that currently have a
+    connected Serial Monitor window open (see app/ui/serial_monitor.py).
+    esptool cannot open a port that's already held open elsewhere, so any
+    device whose port is in this set is flagged as an error telling the
+    user to close that Serial Monitor before uploading.
     """
     report = ValidationReport()
     if connected_ports is None:
         connected_ports = get_port_device_names()
+    if monitor_ports is None:
+        monitor_ports = set()
 
     # --- Duplicate port detection (only across devices being uploaded) ---
     port_usage: dict[str, list[str]] = {}
@@ -78,12 +90,17 @@ def validate_devices(devices: list[DeviceConfig], connected_ports: set[str] | No
                 report.add_error(name, f"Port {port} is used by multiple devices: {', '.join(names)}")
 
     for device in devices:
-        _validate_single_device(device, report, connected_ports)
+        _validate_single_device(device, report, connected_ports, monitor_ports)
 
     return report
 
 
-def _validate_single_device(device: DeviceConfig, report: ValidationReport, connected_ports: set[str]) -> None:
+def _validate_single_device(
+    device: DeviceConfig,
+    report: ValidationReport,
+    connected_ports: set[str],
+    monitor_ports: set[str],
+) -> None:
     name = device.name
 
     if not device.com_port:
@@ -93,6 +110,11 @@ def _validate_single_device(device: DeviceConfig, report: ValidationReport, conn
             name,
             f"Port {device.com_port} is not currently connected. Plug in the device, or "
             "select the correct port in Device Settings, then try again.",
+        )
+    elif device.com_port in monitor_ports:
+        report.add_error(
+            name,
+            f"A Serial Monitor is currently open on port {device.com_port}. Close it before uploading.",
         )
 
     if device.chip_type not in SUPPORTED_CHIPS:

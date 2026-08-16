@@ -96,8 +96,17 @@ class DeviceSettingsWidget(QWidget):
         # Wire change signals AFTER initial population to avoid spurious commits.
         self.name_edit.editingFinished.connect(self._commit)
         self.port_combo.currentTextChanged.connect(self._commit)
+        # port_combo/baud_combo are editable QComboBoxes: picking an entry
+        # from the drop-down list changes currentText but does not always
+        # reach the widget's own line-edit (which is what currentTextChanged
+        # ultimately listens to) until it loses focus. textActivated fires
+        # the instant an item is chosen from the popup, so a mouse selection
+        # commits immediately instead of silently waiting for a manual
+        # keyboard edit to trigger the first commit.
+        self.port_combo.textActivated.connect(self._commit)
         self.chip_combo.currentTextChanged.connect(self._commit)
         self.baud_combo.currentTextChanged.connect(self._commit)
+        self.baud_combo.textActivated.connect(self._commit)
         self.flash_mode_combo.currentTextChanged.connect(self._commit)
         self.flash_freq_combo.currentTextChanged.connect(self._commit)
         self.flash_size_combo.currentTextChanged.connect(self._commit)
@@ -126,23 +135,24 @@ class DeviceSettingsWidget(QWidget):
         enabled = device is not None
         self.title_label.setText(f"Settings — {device.name}" if device else "Settings — (no device selected)")
 
-        if device:
-            self.name_edit.setText(device.name)
-            self.port_combo.setEditText(device.com_port)
-            self.chip_combo.setCurrentText(device.chip_type)
-            self.baud_combo.setCurrentText(str(device.baud_rate))
-            self.flash_mode_combo.setCurrentText(device.flash_mode)
-            self.flash_freq_combo.setCurrentText(device.flash_frequency)
-            self.flash_size_combo.setCurrentText(device.flash_size)
-            self.erase_check.setChecked(device.erase_before_upload)
-            self.reset_check.setChecked(device.reset_after_upload)
-            self.compression_check.setChecked(device.compression)
-            self.stub_check.setChecked(device.stub_loader)
-            self.custom_args_edit.setText(device.custom_flash_args)
-        else:
-            self.name_edit.clear()
-            self.port_combo.setEditText("")
-            self.custom_args_edit.clear()
+        # With nothing selected, show a freshly-created default device's
+        # settings (disabled) instead of whatever happened to be left over
+        # in each widget -- otherwise an untouched baud_combo simply shows
+        # its first list entry (9600) rather than the app's real default.
+        display = device if device is not None else DeviceConfig()
+
+        self.name_edit.setText(display.name if device else "")
+        self.port_combo.setEditText(display.com_port)
+        self.chip_combo.setCurrentText(display.chip_type)
+        self.baud_combo.setCurrentText(str(display.baud_rate))
+        self.flash_mode_combo.setCurrentText(display.flash_mode)
+        self.flash_freq_combo.setCurrentText(display.flash_frequency)
+        self.flash_size_combo.setCurrentText(display.flash_size)
+        self.erase_check.setChecked(display.erase_before_upload)
+        self.reset_check.setChecked(display.reset_after_upload)
+        self.compression_check.setChecked(display.compression)
+        self.stub_check.setChecked(display.stub_loader)
+        self.custom_args_edit.setText(display.custom_flash_args if device else "")
 
         for widget in (
             self.name_edit, self.port_combo, self.chip_combo, self.baud_combo,
@@ -153,6 +163,19 @@ class DeviceSettingsWidget(QWidget):
             widget.setEnabled(enabled)
 
         self._loading = False
+
+    def current_device_id(self) -> str | None:
+        return self._device.id if self._device is not None else None
+
+    def refresh_display(self) -> None:
+        """Re-sync every field from the current device's live state. Call
+        this after the device was changed from anywhere other than this
+        widget's own fields (e.g. a Firmware Profile or Batch Edit applied
+        externally), and also after this widget's own commits, so the
+        panel (including its title) never shows stale data until the user
+        happens to reselect the device."""
+        if self._device is not None:
+            self.set_device(self._device)
 
     # ------------------------------------------------------------------
     def _commit(self, *_args) -> None:
@@ -174,4 +197,5 @@ class DeviceSettingsWidget(QWidget):
         device.compression = self.compression_check.isChecked()
         device.stub_loader = self.stub_check.isChecked()
         device.custom_flash_args = self.custom_args_edit.text()
+        self.refresh_display()
         self.settings_changed.emit(device.id)

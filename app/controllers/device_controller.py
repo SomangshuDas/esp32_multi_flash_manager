@@ -114,13 +114,14 @@ class DeviceController(QObject):
 
     def apply_firmware_to_devices(self, device_ids: list[str], entries: list) -> int:
         """
-        Factory Batch Flash helper: replace `device_ids`' firmware lists
-        with independent copies of the same `entries` (as produced by
-        `scan_firmware_folder()`), so one imported "firmware set" can be
-        stamped onto many devices in one step instead of re-importing per
-        device. Each device gets its own `FirmwareEntry.duplicate()`s
-        (fresh ids) so editing one device's addresses later never mutates
-        another device's copy. Returns the number of devices updated.
+        Assign Firmware Set to Devices helper: replace `device_ids`'
+        firmware lists with independent copies of the same `entries` (as
+        produced by `scan_firmware_folder()`), so one imported "firmware
+        set" can be stamped onto many devices (all of them, or just a
+        selected subset) in one step instead of re-importing per device.
+        Each device gets its own `FirmwareEntry.duplicate()`s (fresh ids)
+        so editing one device's addresses later never mutates another
+        device's copy. Returns the number of devices updated.
         """
         updated = 0
         for device_id in device_ids:

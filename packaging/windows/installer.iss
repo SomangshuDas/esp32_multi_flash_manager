@@ -140,7 +140,7 @@ Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}\SupportedTypes"
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\README.txt"; Description: "View the README"; Flags: postinstall shellexec skipifsilent unchecked
-Filename: "{#AppReleasesURL}"; Description: "View what's new (opens the GitHub Releases page in your browser)"; Flags: postinstall shellexec skipifsilent unchecked
+Filename: "{#AppReleasesURL}"; Description: "View what's new"; Flags: postinstall shellexec skipifsilent unchecked
 
 [UninstallDelete]
 Type: files; Name: "{app}\app_icon.ico"

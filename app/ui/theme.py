@@ -70,6 +70,23 @@ QLineEdit, QComboBox, QSpinBox, QTextEdit, QPlainTextEdit {
 }
 QComboBox QAbstractItemView { background-color: #26272b; selection-background-color: #3a6df0; }
 
+/* Disabled state -- anything the user can't currently interact with (a
+   greyed-out field belonging to "no device selected", a locked-out menu
+   action, etc.) is visually muted here so it reads as inactive at a
+   glance, distinct from every enabled control around it. */
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QTextEdit:disabled, QPlainTextEdit:disabled {
+    background-color: #29292c;
+    color: #6b6d72;
+    border: 1px solid #303236;
+}
+QLabel:disabled { color: #5f6167; }
+QCheckBox:disabled, QRadioButton:disabled { color: #5f6167; }
+QMenuBar::item:disabled { color: #5f6167; }
+QMenu::item:disabled { color: #5a5c62; }
+QTabBar::tab:disabled { color: #5a5c62; }
+QGroupBox:disabled { color: #5f6167; }
+QToolBar QToolButton:disabled { color: #5f6167; }
+
 QTableWidget, QTreeWidget, QListWidget {
     background-color: #202124;
     alternate-background-color: #24252a;
@@ -167,6 +184,20 @@ QLineEdit, QComboBox, QSpinBox, QTextEdit, QPlainTextEdit {
     selection-background-color: #3a6df0;
 }
 QComboBox QAbstractItemView { background-color: #ffffff; selection-background-color: #3a6df0; }
+
+/* Disabled state -- see the matching comment in DARK_QSS. */
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QTextEdit:disabled, QPlainTextEdit:disabled {
+    background-color: #eceef1;
+    color: #a2a6ad;
+    border: 1px solid #d5d8dd;
+}
+QLabel:disabled { color: #a2a6ad; }
+QCheckBox:disabled, QRadioButton:disabled { color: #a2a6ad; }
+QMenuBar::item:disabled { color: #a2a6ad; }
+QMenu::item:disabled { color: #b0b4bb; }
+QTabBar::tab:disabled { color: #b0b4bb; }
+QGroupBox:disabled { color: #a2a6ad; }
+QToolBar QToolButton:disabled { color: #a2a6ad; }
 
 QTableWidget, QTreeWidget, QListWidget {
     background-color: #ffffff;

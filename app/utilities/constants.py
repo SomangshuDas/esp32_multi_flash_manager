@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -123,6 +123,11 @@ LIVE_LOG_MAX_LINES = 10000
 # --------------------------------------------------------------------------
 GITHUB_REPO = "SomangshuDas/esp32_multi_flash_manager"
 
+# Help -> User Manual opens this file straight from GitHub so it's always
+# in sync with the branch, rather than bundling (and going stale against)
+# a local copy inside the packaged app.
+USER_MANUAL_URL = f"https://github.com/{GITHUB_REPO}/blob/main/docs/USER_MANUAL.md"
+
 # Dropped next to the executable by an OS installer (Windows Setup.exe) so
 # a frozen build can tell "installed" apart from "portable" at runtime.
 # Its presence is what lets update_checker.py offer an installer asset to
@@ -131,11 +136,58 @@ GITHUB_REPO = "SomangshuDas/esp32_multi_flash_manager"
 INSTALL_MARKER_FILENAME = "install_marker.txt"
 
 # --------------------------------------------------------------------------
-# Factory Batch Flash mode + Interface Lock (app/ui/main_window.py)
+# Interface Lock (app/ui/main_window.py)
 # --------------------------------------------------------------------------
-FACTORY_BATCH_MODE_SHORTCUT = "Ctrl+Shift+F"
 ASSIGN_FIRMWARE_SET_SHORTCUT = "Ctrl+Shift+A"
 INTERFACE_LOCK_SHORTCUT = "Ctrl+Shift+L"
 
-SETTINGS_KEY_FACTORY_BATCH_MODE = "factory_batch_mode_enabled"
 SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH = "interface_lock_key_hash"
+
+# --------------------------------------------------------------------------
+# User-customisable keyboard shortcuts (app/utilities/shortcuts.py)
+# --------------------------------------------------------------------------
+# Every entry the user is allowed to remap, keyed by a stable action id, with
+# its default key sequence and a human-readable label for the Shortcuts
+# dialog. Anything NOT listed here (e.g. a toolbar-only duplicate action)
+# keeps a fixed, non-customisable shortcut.
+DEFAULT_SHORTCUTS: dict[str, str] = {
+    "new_project": "Ctrl+N",
+    "open_project": "Ctrl+O",
+    "save_project": "Ctrl+S",
+    "save_project_as": "Ctrl+Shift+S",
+    "exit_app": "Ctrl+Q",
+    "add_device": "Ctrl+D",
+    "batch_edit": "Ctrl+B",
+    "assign_firmware_set": ASSIGN_FIRMWARE_SET_SHORTCUT,
+    "upload_selected": "F5",
+    "upload_all": "Ctrl+F5",
+    "cancel_all": "Esc",
+    "toggle_theme": "Ctrl+T",
+    "lock_interface": INTERFACE_LOCK_SHORTCUT,
+    "open_serial_monitor": "Ctrl+M",
+}
+
+SHORTCUT_LABELS: dict[str, str] = {
+    "new_project": "New Project",
+    "open_project": "Open Project...",
+    "save_project": "Save Project",
+    "save_project_as": "Save Project As...",
+    "exit_app": "Exit",
+    "add_device": "Add Device",
+    "batch_edit": "Batch Edit...",
+    "assign_firmware_set": "Assign Firmware Set to Devices...",
+    "upload_selected": "Upload Selected",
+    "upload_all": "Upload All",
+    "cancel_all": "Cancel All",
+    "toggle_theme": "Toggle Dark/Light Theme",
+    "lock_interface": "Lock Interface",
+    "open_serial_monitor": "Open Serial Monitor...",
+}
+
+SETTINGS_KEY_CUSTOM_SHORTCUTS = "custom_shortcuts"
+
+# --------------------------------------------------------------------------
+# Serial Monitor (app/ui/serial_monitor.py)
+# --------------------------------------------------------------------------
+DEFAULT_SERIAL_MONITOR_BAUD = 115200
+SERIAL_MONITOR_LINE_ENDINGS = ["None", "\\n (LF)", "\\r\\n (CRLF)", "\\r (CR)"]

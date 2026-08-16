@@ -101,7 +101,7 @@ def _parse_version(version: str) -> tuple[int, ...]:
 
 
 def is_newer(remote_version: str, local_version: str = APP_VERSION) -> bool:
-    """True if `remote_version` (e.g. 'v0.5.0' or '0.5.0') is strictly
+    """True if `remote_version` (e.g. 'v0.6.0' or '0.6.0') is strictly
     newer than `local_version`, comparing numeric release components."""
     return _parse_version(remote_version) > _parse_version(local_version)
 
@@ -149,10 +149,10 @@ def check_for_update() -> UpdateInfo | None:
     if not raw_tag or not is_newer(raw_tag):
         return None
 
-    # GitHub tag names are "v"-prefixed (e.g. "v0.5.0"). Callers that display
+    # GitHub tag names are "v"-prefixed (e.g. "v0.6.0"). Callers that display
     # this value prepend their own "v" (e.g. f"v{info.version}"), so strip
     # the prefix here rather than storing it raw -- otherwise the UI ends up
-    # showing a doubled "vv0.5.0".
+    # showing a doubled "vv0.6.0".
     remote_version = raw_tag.lstrip("vV")
 
     page_url = payload.get("html_url", _RELEASES_PAGE_URL)

@@ -1,7 +1,10 @@
 # User Manual — ESP32 Multi Flash Manager
 
 This guide walks through day-to-day use of the application on a
-manufacturing or lab bench.
+manufacturing or lab bench. It's also one click away inside the app
+itself via **Help → User Manual (GitHub)**, which always opens this
+same file on GitHub so it's never out of sync with the version you're
+running.
 
 ## 1. Launching the app
 
@@ -30,7 +33,7 @@ manual `File → Open Project` step needed.
   column — including Name — can be resized by dragging its header edge to
   fit your workflow. Right-click a row (or multi-select with Ctrl/
   Shift-click) for a context menu with Upload Selected / Cancel Selected /
-  Duplicate / Remove.
+  Open Serial Monitor (single selection only) / Duplicate / Remove.
 - **Right panel:** two tabs for whichever device is selected —
   **Firmware** (its list of `.bin` files) and **Device Settings** (port,
   chip, baud, flash mode/frequency/size, and the flashing option
@@ -196,33 +199,48 @@ default baud rate, and default flash mode for new devices, and gives you
 a one-click **Open Logs Folder** button if you need to send logs to
 support.
 
-## 14. Factory Batch Flash mode
+## 14. Serial Monitor
 
-**View → Factory Batch Flash Mode** (`Ctrl+Shift+F`) is built for the
-"one firmware set, many identical devices" workflow common on a
-manufacturing bench. Turning it on re-stacks the main window: the
-**centralised Firmware + Device Settings tabs move to the top**, with
-the full device list underneath — instead of side-by-side. Every other
-feature works exactly as before in this layout: auto-detect, the
-pre-upload warning page, live per-device progress, history, everything.
-Turn it off the same way (`Ctrl+Shift+F` again, or un-check it in the
-View menu) to go back to the normal side-by-side layout; your choice is
-remembered the next time you launch the app.
+**Tools → Open Serial Monitor...** (or right-click a device row →
+**Open Serial Monitor**) opens a live, two-way view of a board's serial
+output — the same job as the Arduino IDE's or PlatformIO's serial
+monitor, built in so you don't need a second tool. Pick the port (and,
+from the device row, its saved baud rate is pre-filled) and click
+**Connect**; you can open as many of these windows as you have ports
+for, each independent, with its own baud-rate selector, auto-scroll,
+Pause/Resume, search, Copy, Save Log..., Clear, and a send line (with a
+line-ending choice) for talking back to the device.
 
-The companion action, **Devices → Assign Firmware Set to Devices...**
-(`Ctrl+Shift+A`), imports one firmware folder with the same auto-detect
-used on the Firmware tab and applies the resulting `.bin` + address list
-to every currently selected device (or to all devices, if you say so
-when prompted) in a single step — no more re-importing the same folder
-once per board.
+Two safeguards keep it from colliding with flashing:
+- Opening a monitor on a port that's currently mid-upload is refused —
+  wait for the upload to finish first.
+- Starting an upload on a port that already has a *connected* Serial
+  Monitor open is refused by the pre-upload validation page, which
+  tells you exactly which port's monitor to close first.
 
-## 15. Locking the interface
+## 15. Assign Firmware Set to Devices
 
-**Tools → Lock Interface** (`Ctrl+Shift+L`) freezes the entire window —
+**Devices → Assign Firmware Set to Devices...** is built for the "one
+firmware set, many identical devices" workflow common on a
+manufacturing bench. It imports one firmware folder with the same
+auto-detect used on the Firmware tab, then asks explicitly whether to
+apply the resulting `.bin` + address list to **All Devices** or just
+your currently **Selected Devices** (that option only appears if you
+have a selection) — no more re-importing the same folder once per
+board. Every other feature works exactly as it does when importing
+firmware per-device: auto-detect, the pre-upload warning page, live
+per-device progress, history, everything.
+
+## 16. Locking the interface
+
+**Tools → Lock Interface** freezes the entire window —
 menus, toolbars, device list, firmware/settings panels, everything —
 behind a full-screen "Interface Locked" prompt, so you can walk away
 from a running batch on a shared bench PC without someone bumping a
-setting or cancelling an upload.
+setting or cancelling an upload. If a Logs or Serial Monitor window is
+still open when you try to lock, locking is refused and you're told
+which window(s) to close first — those are separate windows the lock
+can't reach, so leaving one open would leave a hole in it.
 
 The first time you lock, you'll be asked to set an **unlock key**
 (**Tools → Set Interface Lock Key...**, entered twice to confirm). The
@@ -231,9 +249,15 @@ asks for that same key back. Closing the window (including the OS
 close button) is blocked while locked; unlock first, then exit normally
 if you need to.
 
-## 16. Keyboard shortcuts
+## 17. Keyboard shortcuts
 
-| Shortcut | Action |
+**Tools → Keyboard Shortcuts...** lets you remap any action below to a
+key sequence of your choice; the app warns you (and blocks Save) if two
+actions end up sharing the same shortcut. **Reset to Defaults**
+restores everything shown here. Any action not listed here (e.g. Cancel
+Selected, Retry Failed) has no default shortcut and isn't customisable.
+
+| Default Shortcut | Action |
 |---|---|
 | `Ctrl+N` | New Project |
 | `Ctrl+O` | Open Project |
@@ -246,11 +270,11 @@ if you need to.
 | `Ctrl+F5` | Upload All |
 | `Esc` | Cancel All |
 | `Ctrl+T` | Toggle Dark/Light Theme |
-| `Ctrl+Shift+F` | Toggle Factory Batch Flash Mode |
+| `Ctrl+M` | Open Serial Monitor |
 | `Ctrl+Shift+L` | Lock Interface |
 | `Ctrl+Q` | Exit |
 
-## 17. Troubleshooting
+## 18. Troubleshooting
 
 - **"esptool could not be launched"** — make sure `pip install -r
   requirements.txt` succeeded and that `python -m esptool version` works
@@ -258,7 +282,12 @@ if you need to.
 - **A device won't connect** — check the port is correct (unplug/
   replug and watch the status bar toast; the dashboard's Disconnected
   tile also flags it), and that no other program (Arduino IDE Serial
-  Monitor, PlatformIO, etc.) is holding the port open.
+  Monitor, PlatformIO, this app's own Serial Monitor, etc.) is holding
+  the port open.
+- **"Close the Serial Monitor before uploading"** — this app's own
+  built-in Serial Monitor (§14) is connected to the same port you're
+  trying to flash; esptool can't share a port with anything else.
+  Disconnect or close that Serial Monitor window, then upload again.
 - **Duplicate port error at upload time** — two devices in your
   selection share the same port; only one can use it at once. Fix one
   of them in the Device Settings tab.

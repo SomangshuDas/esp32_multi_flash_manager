@@ -58,7 +58,10 @@ This document is for engineers extending or maintaining the codebase.
 | `app/utilities/constants.py` | Every shared literal (chip lists, baud rates, status strings, colors, shortcuts, settings keys, ...) |
 | `app/utilities/helpers.py` | Pure functions: MD5, human-readable sizes/durations, hex address validation, ... |
 | `app/utilities/update_checker.py` | GitHub Releases polling + portable-vs-installer asset selection (`is_portable_build()`) |
+| `app/utilities/shortcuts.py` | User-customisable keyboard shortcuts: defaults + `AppSettings` overrides + duplicate detection |
 | `app/ui/lock_overlay.py` | `LockOverlay`: the full-window "Interface Locked" widget used by Tools → Lock Interface |
+| `app/ui/serial_monitor.py` | `SerialMonitorWidget` + background `_SerialReaderThread`: standalone, multi-port live serial console |
+| `app/ui/shortcuts_dialog.py` | `ShortcutsDialog`: remap every customisable shortcut, with live duplicate-conflict warnings |
 | `app/ui/*.py` | Qt widgets/dialogs — see file docstrings for each |
 
 ## 3. Extending chip / flash-parameter support
@@ -187,43 +190,72 @@ asset matching both the current OS *and* the current build kind
 app never downloads or applies an update in place; installing is always
 left to the OS-native installer/DMG/AppImage flow.
 
-## 11. Factory Batch Flash mode & Interface Lock
+## 11. Assign Firmware Set to Devices, Serial Monitor & Interface Lock
 
-**Factory Batch Flash mode** (`MainWindow._apply_factory_batch_mode`,
-View → Factory Batch Flash Mode / `Ctrl+Shift+F`) is a pure layout
-toggle, not a separate code path: it pulls the same `device_panel` and
-`settings_tabs` (Firmware + Device Settings) widgets out of
-`main_splitter` and re-adds them in the opposite order with the
-splitter's orientation flipped, so the centralised settings sit above
-the device list instead of beside it. Because it's the same widgets, the
-same controllers, and the same `_upload_device_ids()` upload path, every
-existing feature (auto-detect, the pre-upload validation/warning
-dialog, live per-device progress, history) keeps working with zero
-duplicated logic. The mode's on/off state is persisted via
-`AppSettings` under `SETTINGS_KEY_FACTORY_BATCH_MODE` and restored at
-startup.
+`Devices → Assign Firmware Set to Devices...`
+(`MainWindow._on_assign_firmware_set`) stamps one imported firmware
+folder across many devices in one step: it reuses
+`firmware_manager.auto_detect.scan_firmware_folder()` for the scan and
+`DeviceController.apply_firmware_to_devices()` for the assignment,
+which gives each target device its own `FirmwareEntry.duplicate()`s so
+later per-device address edits never cross-contaminate another
+device's copy. `_choose_assign_firmware_targets()` asks explicitly
+whether to apply to **All Devices** or just the current **Selected
+Devices** (the latter option is only offered when something is
+selected) via a `QMessageBox` with named buttons rather than an
+ambiguous Yes/No.
 
-`Devices → Assign Firmware Set to Devices...` (`Ctrl+Shift+A`,
-`MainWindow._on_assign_firmware_set`) is the companion action for
-stamping one imported firmware folder across many devices in one step:
-it reuses `firmware_manager.auto_detect.scan_firmware_folder()` for the
-scan and the new `DeviceController.apply_firmware_to_devices()` for the
-assignment, which gives each target device its own
-`FirmwareEntry.duplicate()`s so later per-device address edits never
-cross-contaminate another device's copy.
+**Serial Monitor** (`app/ui/serial_monitor.py::SerialMonitorWidget`,
+`Tools → Open Serial Monitor...` or right-click a device row) is
+independent of the flashing pipeline entirely -- it opens its own
+`pyserial` connection on a background `_SerialReaderThread` (QThread)
+so the GUI never blocks on I/O, and supports any number of concurrent
+ports, each tracked by `MainWindow._serial_monitors: dict[str,
+SerialMonitorWidget]` keyed by port name (opening the same port twice
+just raises the existing window). `MainWindow._busy_ports()` refuses to
+open a monitor on a port that's mid-upload; conversely,
+`flash_engine.validator.validate_devices()`'s new `monitor_ports`
+parameter (populated from `MainWindow._monitor_ports()`, i.e. only
+*connected* monitors) refuses to start an upload on a port that
+already has a Serial Monitor open, and reports which one to close.
 
-**Interface Lock** (`Tools → Lock Interface` / `Ctrl+Shift+L`) disables
+**Interface Lock** (`Tools → Lock Interface`) disables
 the menu bar, every toolbar, every dock widget, the central widget, and
 every `QAction` created via `MainWindow._add_action` (tracked in
 `self._all_actions` — disabling the container widgets alone does not
 stop a `QAction`'s window-level keyboard shortcut from still firing), and
 raises `app/ui/lock_overlay.py::LockOverlay` on top of the whole window.
-The unlock key is never stored in plaintext: `Tools → Set Interface Lock
-Key...` hashes it with SHA-256 (`hashlib.sha256`) before writing it to
-`AppSettings` under `SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH`, and
-`_on_unlock_attempt()` compares hashes. `closeEvent()` refuses to close
-the window while `lock_overlay.isVisible()`, so the lock can't be
-bypassed with the OS window-manager's close button.
+Before any of that, `_on_lock_interface()` calls
+`_open_secondary_window_titles()` to check for any visible Logs or
+Serial Monitor window (both are independent top-level widgets outside
+`centralWidget()`, so disabling the central widget alone would leave
+them live); if any are open, locking is refused and the user is told
+which window(s) to close first. The unlock key is never stored in
+plaintext: `Tools → Set Interface Lock Key...` hashes it with SHA-256
+(`hashlib.sha256`) before writing it to `AppSettings` under
+`SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH`, and `_on_unlock_attempt()`
+compares hashes. `closeEvent()` refuses to close the window while
+`lock_overlay.isVisible()`, so the lock can't be bypassed with the OS
+window-manager's close button.
+
+## 12. Keyboard shortcut customisation
+
+Every customisable action has a stable `action_id` (see
+`app.utilities.constants.DEFAULT_SHORTCUTS` /
+`SHORTCUT_LABELS`) instead of a shortcut baked directly into
+`MainWindow._add_action()`'s call site. `app/utilities/shortcuts.py`
+merges those defaults with any user overrides saved under
+`AppSettings`' `SETTINGS_KEY_CUSTOM_SHORTCUTS` (only the entries that
+differ from default are persisted, so a future default change is
+picked up automatically for anyone who never touched that shortcut).
+`Tools → Keyboard Shortcuts...` opens `app/ui/shortcuts_dialog.py`'s
+`ShortcutsDialog`, one `QKeySequenceEdit` per action; `find_duplicates()`
+re-runs on every edit and blocks Save (greys out OK, shows the
+conflicting actions) until every key sequence is unique. On accept,
+`MainWindow` re-applies every shortcut live via
+`self._shortcut_actions: dict[str, QAction]` — no menu rebuild needed.
+Actions without an `action_id` (e.g. a toolbar-only duplicate of a menu
+action) keep a fixed, non-customisable shortcut.
 
 ---
 
