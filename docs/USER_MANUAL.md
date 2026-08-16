@@ -2,7 +2,7 @@
 
 This guide walks through day-to-day use of the application on a
 manufacturing or lab bench. It's also one click away inside the app
-itself via **Help → User Manual (GitHub)**, which always opens this
+itself via **Help → User Manual**, which always opens this
 same file on GitHub so it's never out of sync with the version you're
 running.
 

@@ -232,7 +232,7 @@ class MainWindow(QMainWindow):
 
         # ---- Help menu ----
         help_menu = menu_bar.addMenu("&Help")
-        self._add_action(help_menu, "User Manual (GitHub)", "", self._on_open_user_manual)
+        self._add_action(help_menu, "User Manual", "", self._on_open_user_manual)
         help_menu.addSeparator()
         self._add_action(help_menu, "About", "", self._on_about)
 
