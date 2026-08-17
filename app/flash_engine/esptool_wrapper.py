@@ -23,9 +23,11 @@ esptool's stdout.
 
 from __future__ import annotations
 
+import queue
 import re
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -188,6 +190,8 @@ class FlashProcess:
     def __init__(self, command: list[str]) -> None:
         self.command = command
         self._process: subprocess.Popen | None = None
+        self._line_queue: "queue.Queue[str | None]" = queue.Queue()
+        self._reader_thread: threading.Thread | None = None
 
     def start(self) -> None:
         logger.debug("Launching esptool subprocess: %s", " ".join(self.command))
@@ -204,15 +208,45 @@ class FlashProcess:
             universal_newlines=True,
             creationflags=creationflags,
         )
+        # stdout is drained on a dedicated daemon thread into a queue rather
+        # than iterated directly, so the caller can poll with a timeout (see
+        # iter_lines) instead of blocking forever. This matters because a
+        # device that disconnects mid-write can leave the OS serial driver
+        # parked in an uninterruptible I/O wait that esptool has no timeout
+        # for -- without this, a plain `for line in process.stdout` never
+        # returns, and the FlashWorker QThread reading it never finishes.
+        self._reader_thread = threading.Thread(target=self._drain_stdout, daemon=True)
+        self._reader_thread.start()
 
-    def iter_lines(self) -> Iterator[str]:
-        """Yield decoded stdout lines as they arrive, until the process exits."""
-        if self._process is None or self._process.stdout is None:
+    def _drain_stdout(self) -> None:
+        if self._process is not None and self._process.stdout is not None:
+            for raw_line in self._process.stdout:
+                line = raw_line.rstrip("\r\n")
+                if line:
+                    self._line_queue.put(line)
+        self._line_queue.put(None)  # sentinel: stdout closed / process exited
+
+    def iter_lines(self, stall_timeout: float | None = None) -> Iterator[str | None]:
+        """
+        Yield decoded stdout lines as they arrive, until the process exits.
+
+        If `stall_timeout` is given (seconds) and no line -- nor the
+        end-of-stream sentinel -- arrives within that window, yields `None`
+        once per timeout window instead of blocking forever. Callers use a
+        `None` to detect a genuinely unresponsive/hung subprocess and abort,
+        rather than leaving the worker parked indefinitely (see start()).
+        """
+        if self._process is None:
             return
-        for raw_line in self._process.stdout:
-            line = raw_line.rstrip("\r\n")
-            if line:
-                yield line
+        while True:
+            try:
+                line = self._line_queue.get(timeout=stall_timeout)
+            except queue.Empty:
+                yield None
+                continue
+            if line is None:
+                return
+            yield line
 
     def wait(self, timeout: float | None = None) -> int:
         if self._process is None:

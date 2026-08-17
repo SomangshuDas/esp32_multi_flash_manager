@@ -142,6 +142,7 @@ def _validate_single_device(
 
     # Per-file checks: missing files, invalid/duplicate addresses.
     seen_addresses: dict[str, str] = {}
+    ranges: list[tuple[int, int, str]] = []  # (start, end_exclusive, file_name)
     for entry in enabled:
         if not entry.file_path:
             report.add_error(name, "A firmware row has no file selected.")
@@ -160,3 +161,28 @@ def _validate_single_device(
             )
         else:
             seen_addresses[norm] = entry.file_name
+        if not entry.missing and entry.file_size > 0:
+            start = int(norm, 16)
+            ranges.append((start, start + entry.file_size, entry.file_name))
+
+    # Byte-range overlap detection. Two entries can use two different,
+    # non-duplicate addresses and still stomp on each other once file size
+    # is taken into account -- e.g. a full merged image (bootloader +
+    # partition table + app already baked in) assigned to 0x0 alongside a
+    # separate 'bootloader.bin' at the conventional 0x1000: 0x0's image is
+    # almost always well past 4KB, so it swallows 0x1000 whole. esptool
+    # itself refuses this at flash time ("Detected overlap at address...");
+    # catching it here surfaces the same problem before anything is sent
+    # to hardware, with enough context to explain *why* it overlaps.
+    ranges.sort(key=lambda r: r[0])
+    for (start_a, end_a, name_a), (start_b, end_b, name_b) in zip(ranges, ranges[1:]):
+        if start_b < end_a:
+            report.add_error(
+                name,
+                f"'{name_a}' (ends at 0x{end_a:x}) overlaps '{name_b}' (starts at "
+                f"0x{start_b:x}). If '{name_a}' is a full merged image flashed at "
+                "0x0, it already contains its own bootloader/partition table and "
+                "should be the ONLY entry enabled for this device -- disable the "
+                "separate bootloader.bin/partition-table.bin rows instead of "
+                "flashing both.",
+            )

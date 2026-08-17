@@ -26,6 +26,7 @@ from app.flash_engine.esptool_wrapper import (
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
 from app.utilities.constants import (
+    FLASH_STALL_TIMEOUT_SECONDS,
     STATUS_CANCELLED,
     STATUS_CONNECTING,
     STATUS_COMPLETED,
@@ -94,8 +95,26 @@ class FlashWorker(QThread):
 
             port_lost = False
             wrote_any = False
-            for line in self._process.iter_lines():
+            stalled = False
+            for line in self._process.iter_lines(stall_timeout=FLASH_STALL_TIMEOUT_SECONDS):
                 if self._cancel_requested:
+                    break
+
+                if line is None:
+                    # No output at all for FLASH_STALL_TIMEOUT_SECONDS: the
+                    # subprocess is treated as hung (typically the device
+                    # dropped off the bus mid-write and the OS driver never
+                    # unblocked esptool's write/read call), not merely slow.
+                    # Killing it here is what stops the status badge -- and
+                    # anything else keyed off is_busy(), like the Serial
+                    # Monitor's busy-port check -- from being stuck on
+                    # "Uploading" until the whole app is restarted.
+                    stalled = True
+                    self.log_line.emit(
+                        device_id,
+                        f">>> No response for {int(FLASH_STALL_TIMEOUT_SECONDS)}s -- "
+                        "the device appears to have disconnected. Aborting.",
+                    )
                     break
 
                 self.log_line.emit(device_id, line)
@@ -131,12 +150,23 @@ class FlashWorker(QThread):
                     # sentence instead of a bare "exited with code 1".
                     port_lost = True
 
-            return_code = self._process.wait(timeout=10) if not self._cancel_requested else -9
+            if stalled:
+                self._process.terminate()
+                self._finish(
+                    device_id, False,
+                    f"Device stopped responding on {self.device.com_port} for "
+                    f"over {int(FLASH_STALL_TIMEOUT_SECONDS)}s during flashing (likely "
+                    "disconnected). Check the USB cable/connection and retry.",
+                    start_time,
+                )
+                return
 
             if self._cancel_requested:
                 self._process.terminate()
                 self._finish(device_id, False, "Cancelled by user.", start_time)
                 return
+
+            return_code = self._process.wait(timeout=10)
 
             if return_code == 0:
                 self.progress_changed.emit(device_id, 100, "")

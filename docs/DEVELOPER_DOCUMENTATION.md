@@ -15,7 +15,14 @@ This document is for engineers extending or maintaining the codebase.
    (`python -m esptool ...`), never imported and called in-process. This
    isolates the GUI from esptool's `sys.exit()` calls and `\r`-based
    progress printing, and lets us kill a stuck flash cleanly. See
-   `app/flash_engine/esptool_wrapper.py`.
+   `app/flash_engine/esptool_wrapper.py`. `FlashProcess` drains the
+   subprocess's stdout on its own background thread into a queue rather
+   than iterating it directly from the QThread, so `FlashWorker` can poll
+   with a timeout (`FLASH_STALL_TIMEOUT_SECONDS`, currently 45s) instead
+   of blocking forever — a device that disconnects mid-write can leave
+   the OS serial driver parked in an uninterruptible I/O wait that
+   esptool has no timeout for, and without this the worker's QThread
+   (and therefore `FlashController.is_busy()`) never returns.
 3. **One QThread per device during a batch.** `FlashWorker` (in
    `app/workers/flash_worker.py`) is a `QThread` subclass; `N` devices
    selected for upload means `N` concurrently running `FlashWorker`
@@ -47,7 +54,7 @@ This document is for engineers extending or maintaining the codebase.
 | `app/controllers/flash_controller.py` | Spins up/tracks `FlashWorker`s, aggregates batch completion, emits history entries |
 | `app/controllers/project_controller.py` | New/open/save/save-as, missing-firmware detection on load |
 | `app/flash_engine/esptool_wrapper.py` | `FlashCommandBuilder` (DeviceConfig → argv) + `FlashProcess` (subprocess wrapper) + `parse_progress_line` |
-| `app/flash_engine/validator.py` | Pure, offline pre-upload validation → `ValidationReport` |
+| `app/flash_engine/validator.py` | Pure, offline pre-upload validation (duplicate/invalid/overlapping addresses, port availability, etc.) → `ValidationReport` |
 | `app/project_manager/project_io.py` | `.efmproj` JSON I/O + recent-projects list (QSettings) |
 | `app/device_manager/port_scanner.py` | pyserial wrapper: `list_available_ports()` |
 | `app/firmware_manager/auto_detect.py` | Folder → `list[FirmwareEntry]` with known-address assignment |
@@ -218,6 +225,25 @@ open a monitor on a port that's mid-upload; conversely,
 parameter (populated from `MainWindow._monitor_ports()`, i.e. only
 *connected* monitors) refuses to start an upload on a port that
 already has a Serial Monitor open, and reports which one to close.
+`_busy_ports()` is keyed off `FlashController.is_busy()` (a live,
+running `FlashWorker`), so the stall-timeout watchdog described above is
+also what guarantees this check can't stay permanently "busy" against a
+device that silently disconnected -- previously a hung worker never
+finished, so `is_busy()` stayed `True` forever and Serial Monitor
+refused to open on that port until the app was restarted.
+
+**Busy-device guards.** A device whose `runtime.status` is currently in
+`ACTIVE_STATUSES` (i.e. `FlashController.is_busy(device.id)` is `True`)
+cannot be removed (`MainWindow._on_remove_devices` filters busy ids out
+of the selection and warns instead of silently skipping them) and its
+`DeviceSettingsWidget` is put into a read-only "locked" state
+(`DeviceSettingsWidget.set_locked()`, driven from
+`MainWindow._on_status_changed`/`_on_device_selected`) so its
+com_port/chip/baud/etc. fields can't be edited out from under the
+`FlashWorker` currently reading that same `DeviceConfig`. This
+intentionally does *not* extend to that device's Live Output window or
+an open Serial Monitor on its port -- neither of those touches
+`runtime.status`, so both remain fully interactive during an upload.
 
 **Interface Lock** (`Tools → Lock Interface`) disables
 the menu bar, every toolbar, every dock widget, the central widget, and

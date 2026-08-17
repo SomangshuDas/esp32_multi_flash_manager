@@ -332,6 +332,29 @@ class MainWindow(QMainWindow):
         self._refresh_dashboard()
 
     def _on_remove_devices(self, device_ids: list[str]) -> None:
+        # A device that's mid-flash (Preparing/Connecting/Erasing/Uploading/
+        # Verifying) must not be removed out from under its own live
+        # FlashWorker -- that thread still holds a reference to this exact
+        # DeviceConfig and keeps emitting signals for a device_id the UI
+        # would otherwise have already dropped. Removal is blocked on
+        # `flash_controller.is_busy()`, which only reflects that specific
+        # in-flight flash -- merely having the device's Live Output/Log
+        # window or a Serial Monitor open on its port is unaffected, since
+        # neither of those set an ACTIVE_STATUSES status on the device.
+        busy_ids = [did for did in device_ids if self.flash_controller.is_busy(did)]
+        if busy_ids:
+            busy_names = [
+                d.name for d in self.device_controller.devices() if d.id in busy_ids
+            ]
+            QMessageBox.warning(
+                self, "Remove Devices",
+                "Cannot remove while flashing is in progress: "
+                f"{', '.join(busy_names)}. Wait for the upload to finish or cancel it first.",
+            )
+            device_ids = [did for did in device_ids if did not in busy_ids]
+            if not device_ids:
+                return
+
         confirm = QMessageBox.question(self, "Remove Devices", f"Remove {len(device_ids)} device(s)?")
         if confirm != QMessageBox.StandardButton.Yes:
             return
@@ -349,7 +372,8 @@ class MainWindow(QMainWindow):
     def _on_device_selected(self, device_id: str | None) -> None:
         device = self.device_controller.get_device(device_id) if device_id else None
         self.firmware_panel.set_device(device)
-        self.settings_widget.set_device(device)
+        locked = device is not None and self.flash_controller.is_busy(device.id)
+        self.settings_widget.set_device(device, locked=locked)
 
     def _on_device_config_changed(self, device_id: str) -> None:
         device = self.device_controller.get_device(device_id)
@@ -648,6 +672,12 @@ class MainWindow(QMainWindow):
         console = self._live_consoles.get(device_id)
         if console is not None:
             console.set_status(status)
+        # Lock/unlock the Settings panel in step with this device's own
+        # busy state, not just the status string, so it lines up exactly
+        # with what _busy_ports()/remove-device use -- e.g. COMPLETED still
+        # briefly reports is_busy() while the worker thread unwinds.
+        if self.settings_widget.current_device_id() == device_id:
+            self.settings_widget.set_locked(self.flash_controller.is_busy(device_id))
         self._refresh_dashboard()
 
     def _on_device_progress(self, device_id: str, percent: int, address: str) -> None:

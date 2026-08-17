@@ -96,15 +96,45 @@ and shows a report if it finds problems:
 
 - **Errors** (block the upload): duplicate ports, no port
   selected, missing firmware files, invalid or duplicate flash addresses,
-  invalid chip/flash-mode selection, no enabled firmware.
+  overlapping flash addresses (see below), invalid chip/flash-mode
+  selection, no enabled firmware.
 - **Warnings** (you may proceed anyway): no firmware assigned to the
   conventional bootloader (`0x1000`) or partition-table (`0x8000`)
   addresses — this is expected if you're flashing a single merged image.
+
+**Overlapping addresses.** Two firmware entries can use two different,
+non-duplicate addresses and still collide once file size is taken into
+account. The most common case: a full merged image (one `.bin` that
+already contains its own bootloader, partition table, and app — the kind
+esptool writes when you pass a single file at `0x0`) flashed *alongside*
+a separate `bootloader.bin` at `0x1000` and/or `partition-table.bin` at
+`0x8000`. The merged image is almost always well past 4 KB, so it
+overwrites those addresses before esptool even gets there. The validator
+now catches this before anything reaches hardware — if you see it,
+either disable the separate bootloader/partition-table rows and flash
+only the merged image at `0x0`, or don't enable the `0x0` merged image
+alongside them.
 
 Once underway, each device flashes independently and in parallel: its own
 status badge walks through *Waiting → Preparing → Connecting → Erasing →
 Uploading → Verifying → Completed* (or *Failed*/*Cancelled*), its own
 progress bar fills, and its own elapsed/ETA/speed columns update live.
+
+If a device disconnects mid-upload and never responds again (the flash
+never completes, errors, or times out), the app now abandons that
+device's flash automatically after about 45 seconds of silence and marks
+it *Failed* with a "device appears to have disconnected" message — it no
+longer sits stuck on *Uploading* until you restart the app, and its
+Serial Monitor is no longer permanently blocked as "currently uploading."
+
+While a device's status is anywhere in *Preparing → Verifying* (i.e. an
+upload is actually running against it), that device's Device Settings
+panel is locked (read-only, with a "locked — flashing in progress" note
+in its title) and it can't be removed from the project — this prevents
+changing its port/chip/flash options or deleting it out from under the
+in-progress flash. This does **not** apply to that device's Live Output
+window or an open Serial Monitor on its port; both stay fully usable
+while the upload runs.
 
 ## 6. Watching progress / live output
 
@@ -291,6 +321,24 @@ Selected, Retry Failed) has no default shortcut and isn't customisable.
 - **Duplicate port error at upload time** — two devices in your
   selection share the same port; only one can use it at once. Fix one
   of them in the Device Settings tab.
+- **"overlaps" error in the validation report** — a firmware entry's
+  address plus its file size runs into the next entry's address. This
+  happens most often when a full merged image (already containing its
+  own bootloader/partition table) is enabled at `0x0` at the same time
+  as separate `bootloader.bin`/`partition-table.bin` rows — disable one
+  or the other, don't flash both.
+- **A device's Settings panel is locked / grey / won't accept edits** —
+  that device is currently flashing (status somewhere between
+  *Preparing* and *Verifying*). Wait for it to finish or cancel it first;
+  the panel unlocks automatically the moment it's no longer busy.
+- **Can't remove a device** — same cause as above: a device that's
+  mid-flash can't be removed while its upload is in progress.
+- **A device is stuck on "Uploading" and its Serial Monitor keeps
+  saying "currently uploading firmware"** — if the device disconnected
+  mid-flash, the app auto-fails that device after about 45 seconds of no
+  response instead of hanging indefinitely; give it that long before
+  assuming something's wrong. If it's still stuck well past that, it's
+  worth reporting as a bug rather than restarting the app.
 - **Forgot the interface lock key** — there is no recovery/reset path by
   design (that's the point of a lock). You'll need to close the app from
   the OS (e.g. Task Manager / `kill`, losing unsaved project changes) and

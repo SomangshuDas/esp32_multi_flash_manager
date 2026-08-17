@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.6.1"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -89,6 +89,17 @@ ACTIVE_STATUSES = {
     STATUS_PREPARING, STATUS_CONNECTING, STATUS_ERASING,
     STATUS_UPLOADING, STATUS_VERIFYING,
 }
+
+# --------------------------------------------------------------------------
+# How long FlashWorker waits for a new line of esptool output before
+# deciding the subprocess is hung rather than merely slow (e.g. a device
+# that disconnects mid-write, leaving the OS serial driver blocked in an
+# uninterruptible I/O wait that esptool itself never times out on). Past
+# this many seconds of total silence, the worker kills the subprocess and
+# fails the device instead of leaving its status stuck on "Uploading"
+# forever (which also permanently blocked that port's Serial Monitor).
+# --------------------------------------------------------------------------
+FLASH_STALL_TIMEOUT_SECONDS = 45.0
 
 # --------------------------------------------------------------------------
 # File / project extensions

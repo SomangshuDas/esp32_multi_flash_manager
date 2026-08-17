@@ -37,6 +37,7 @@ class DeviceSettingsWidget(QWidget):
         super().__init__(parent)
         self._device: DeviceConfig | None = None
         self._loading = False
+        self._locked = False
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -129,11 +130,15 @@ class DeviceSettingsWidget(QWidget):
         self.port_combo.blockSignals(False)
 
     # ------------------------------------------------------------------
-    def set_device(self, device: DeviceConfig | None) -> None:
+    def set_device(self, device: DeviceConfig | None, locked: bool = False) -> None:
         self._device = device
+        self._locked = locked
         self._loading = True
-        enabled = device is not None
-        self.title_label.setText(f"Settings — {device.name}" if device else "Settings — (no device selected)")
+        enabled = device is not None and not locked
+        title = f"Settings — {device.name}" if device else "Settings — (no device selected)"
+        if device is not None and locked:
+            title += "  (locked — flashing in progress)"
+        self.title_label.setText(title)
 
         # With nothing selected, show a freshly-created default device's
         # settings (disabled) instead of whatever happened to be left over
@@ -175,11 +180,19 @@ class DeviceSettingsWidget(QWidget):
         panel (including its title) never shows stale data until the user
         happens to reselect the device."""
         if self._device is not None:
-            self.set_device(self._device)
+            self.set_device(self._device, locked=self._locked)
 
-    # ------------------------------------------------------------------
+    def set_locked(self, locked: bool) -> None:
+        """Lock/unlock editing for the currently displayed device without
+        losing its field values -- called whenever the selected device's
+        flash status enters/leaves ACTIVE_STATUSES, so a device that's
+        mid-upload can't have its port/chip/etc. changed out from under
+        the FlashWorker currently reading them."""
+        if self._device is not None and locked != self._locked:
+            self.set_device(self._device, locked=locked)
+
     def _commit(self, *_args) -> None:
-        if self._loading or self._device is None:
+        if self._loading or self._device is None or self._locked:
             return
         device = self._device
         device.name = self.name_edit.text().strip() or device.name
