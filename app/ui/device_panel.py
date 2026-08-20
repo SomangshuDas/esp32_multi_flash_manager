@@ -70,6 +70,7 @@ class DevicePanel(QWidget):
         super().__init__(parent)
         self._row_by_device_id: dict[str, int] = {}
         self._start_times: dict[str, float] = {}
+        self._deletion_locked = False
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -247,7 +248,15 @@ class DevicePanel(QWidget):
         ids = self.selected_device_ids()
         self.selection_changed.emit(ids[0] if ids else None)
 
+    def set_deletion_locked(self, locked: bool) -> None:
+        """Settings Lock disables deleting devices (but not
+        adding/duplicating them) -- see MainWindow._set_factory_mode_locked."""
+        self._deletion_locked = locked
+        self.remove_button.setEnabled(not locked)
+
     def _emit_remove_selected(self) -> None:
+        if self._deletion_locked:
+            return
         ids = self.selected_device_ids()
         if ids:
             self.remove_devices_requested.emit(ids)
@@ -270,6 +279,7 @@ class DevicePanel(QWidget):
             serial_monitor_action = menu.addAction("Open Serial Monitor")
         duplicate_action = menu.addAction("Duplicate")
         remove_action = menu.addAction("Remove")
+        remove_action.setEnabled(not self._deletion_locked)
 
         chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
         if chosen == upload_action:

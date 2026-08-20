@@ -64,7 +64,28 @@ implementation for correctness.
 - **Fully adjustable device table.** Every column — including Name — can
   be resized by dragging its header, so the table fits your workflow
   instead of a fixed layout.
-- **Dark and light themes**, dockable/resizable panels, persistent window
+- **System-aware theme.** Defaults to **System Default**, following your
+  OS's light/dark preference live — switch your desktop theme while the
+  app is open and it updates immediately, no restart needed. Dark and
+  Light are also available directly (`Settings`, or `View → Toggle
+  Dark/Light Theme`).
+- **Merge Bins.** Combine a device's separate firmware images
+  (bootloader, partition table, app, ...) into one flashable `.bin` via
+  `esptool merge-bin`, entirely offline. Pre-merge validation catches
+  missing files, invalid/duplicate addresses, and overlapping flash
+  regions before esptool is even invoked. The merged file defaults to the
+  same folder as `firmware.bin` (both the filename and location are
+  configurable per-merge and as app-wide defaults in **Settings**), and
+  you choose what happens to the source rows afterwards — add the merged
+  bin, remove the source bins, de-select them, or leave Firmware Settings
+  untouched — with a configurable default (Settings) of "add the merged
+  bin and de-select the source bins."
+- **Dynamic chip support.** The Chip Type list is no longer hardcoded — at
+  startup the app asks the installed `esptool` itself which chips it
+  supports, so new esptool releases add new chips automatically. If a
+  project uses a chip your installed esptool no longer supports, you're
+  warned clearly on load instead of finding out only when Upload fails.
+- Dockable/resizable panels, persistent window
   layout, user-customisable keyboard shortcuts (`Tools → Keyboard
   Shortcuts...`, with duplicate-assignment detection), and right-click
   context menus.
@@ -80,19 +101,35 @@ implementation for correctness.
   the Logs console's controls. Refuses to open a port that's mid-upload,
   and the upload validator refuses to start a flash on a port that
   already has a Serial Monitor connected, telling you to close it first.
-- **Interface Lock** (`Tools → Lock Interface`). Freezes the whole window
-  behind a key-protected prompt so a running batch on a shared bench PC
-  can't be bumped or cancelled by a passer-by; the key is stored as a
-  SHA-256 hash, never in plaintext. Refuses to lock while a Logs or
-  Serial Monitor window is still open, and tells you which one(s) to
-  close first.
+- **Interface Lock, in two modes** (`Tools → Lock Interface`), both
+  protected by the same key (stored as a SHA-256 hash, never in
+  plaintext):
+  - **Settings Lock** keeps the window fully usable —
+    uploads, Serial Monitor, and viewing logs all keep working — but
+    disables anything that reconfigures what gets flashed: ports,
+    chip/flash settings, the firmware list (including Merge Bins), Batch
+    Edit, Assign Firmware Set, Firmware Profiles, and deleting devices.
+    Meant for handing a bench to an operator who should run a
+    pre-configured job, not change it.
+  - **Full Lock** — the original behaviour — freezes
+    the *entire* window behind an opaque overlay; nothing is reachable
+    until the key is re-entered. Refuses to lock while a Logs or Serial
+    Monitor window is still open, and tells you which one(s) to close
+    first.
+  Batch Edit, Assign Firmware Set, and Firmware Profile application also
+  refuse to touch a device that's actively uploading, regardless of lock
+  mode — saving your project is never restricted.
 - **Update checker** (`Tools → Check for Updates...`) that's aware of how
   *this* copy was obtained — an installed build is offered the next
   installer, a portable build is offered the next portable executable —
   and always leaves the actual install step to the OS-native installer.
 - **Rotating log files** (application / flash / error / debug), so nothing
   is ever silently lost, and the app is built to *never crash* — every
-  exception is caught, logged, and shown to the user in plain language.
+  expected upload failure (bad cable, board not in bootloader mode, "No
+  serial data received", etc.) is recognized and reported clearly in the
+  device's status/Live Output/history instead of ever reaching a generic
+  error dialog; anything truly unexpected is still caught, logged, and
+  shown to the user in plain language.
 
 ---
 

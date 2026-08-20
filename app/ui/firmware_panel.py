@@ -14,6 +14,7 @@ import os
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -28,8 +29,15 @@ from PySide6.QtWidgets import (
 from app.firmware_manager.auto_detect import scan_firmware_folder
 from app.models.device_model import DeviceConfig
 from app.models.firmware_model import FirmwareEntry
+from app.ui.merge_bin_dialog import MergeBinDialog
 from app.ui.widgets import fit_table_columns, make_scrollable, prepare_table_for_full_content
-from app.utilities.constants import FIRMWARE_FILE_FILTER
+from app.utilities.constants import (
+    FIRMWARE_FILE_FILTER,
+    MERGE_POST_ACTION_ADD_DESELECT,
+    MERGE_POST_ACTION_ADD_REMOVE,
+    MERGE_POST_ACTION_NONE,
+    SUPPORTED_CHIPS,
+)
 from app.utilities.helpers import is_valid_hex_address, normalize_hex_address
 
 COL_ENABLED = 0
@@ -54,6 +62,11 @@ class FirmwarePanel(QWidget):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self._device: DeviceConfig | None = None
+        self._factory_locked = False
+        # Populated by MainWindow at startup from dynamic chip detection
+        # (app/utilities/chip_detect.py); falls back to the hardcoded list
+        # until then so this widget still works standalone/in tests.
+        self._supported_chips: list[str] = list(SUPPORTED_CHIPS)
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -89,6 +102,7 @@ class FirmwarePanel(QWidget):
         self.move_up_button = QPushButton("Move Up")
         self.move_down_button = QPushButton("Move Down")
         self.import_folder_button = QPushButton("Auto-Detect Folder...")
+        self.merge_button = QPushButton("Merge Bins...")
 
         self.add_button.clicked.connect(self._add_bin)
         self.remove_button.clicked.connect(self._remove_selected)
@@ -96,10 +110,12 @@ class FirmwarePanel(QWidget):
         self.move_up_button.clicked.connect(lambda: self._move_selected(-1))
         self.move_down_button.clicked.connect(lambda: self._move_selected(1))
         self.import_folder_button.clicked.connect(self._import_folder)
+        self.merge_button.clicked.connect(self._open_merge_dialog)
 
         for button in (
             self.add_button, self.remove_button, self.duplicate_button,
             self.move_up_button, self.move_down_button, self.import_folder_button,
+            self.merge_button,
         ):
             button_row.addWidget(button)
         button_row.addStretch(1)
@@ -124,11 +140,30 @@ class FirmwarePanel(QWidget):
         self._reload_table()
 
     def _set_controls_enabled(self, enabled: bool) -> None:
+        # Settings Lock disables editing the firmware list
+        # regardless of the per-device "enabled" state passed in here, so
+        # it wins over a normal device selection.
+        enabled = enabled and not self._factory_locked
         for widget in (
             self.add_button, self.remove_button, self.duplicate_button,
-            self.move_up_button, self.move_down_button, self.import_folder_button, self.table,
+            self.move_up_button, self.move_down_button, self.import_folder_button,
+            self.merge_button, self.table,
         ):
             widget.setEnabled(enabled)
+
+    def set_factory_locked(self, locked: bool) -> None:
+        """Settings Lock: disable every firmware-editing
+        control (including Merge Bins) without losing the current
+        device's displayed firmware list."""
+        self._factory_locked = locked
+        self._set_controls_enabled(self._device is not None)
+
+    def set_supported_chips(self, chips: list[str]) -> None:
+        """Called by MainWindow once at startup with the dynamically
+        detected chip list (see app/utilities/chip_detect.py), passed
+        through to MergeBinDialog so its Target Chip dropdown matches
+        what esptool can actually flash."""
+        self._supported_chips = list(chips)
 
     # ------------------------------------------------------------------
     def _reload_table(self) -> None:
@@ -267,6 +302,44 @@ class FirmwarePanel(QWidget):
             QMessageBox.information(self, "No Firmware Found", "No .bin files were found in that folder.")
             return
         self._device.firmware.extend(entries)
+        self._reload_table()
+        self.firmware_changed.emit(self._device.id)
+
+    # ------------------------------------------------------------------
+    # Bin Merge
+    # ------------------------------------------------------------------
+    def _open_merge_dialog(self) -> None:
+        if self._device is None:
+            return
+        if not self._device.firmware:
+            QMessageBox.information(self, "Merge Bins", "Add firmware files to this device first.")
+            return
+
+        dialog = MergeBinDialog(self._device, self._supported_chips, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        merged_entry = dialog.merged_entry()
+        if merged_entry is None:
+            return
+
+        action = dialog.post_action()
+        source_ids = set(dialog.source_entry_ids())
+
+        if action == MERGE_POST_ACTION_NONE:
+            # Just wrote the file to disk -- Firmware Settings untouched.
+            return
+
+        self._device.add_firmware(merged_entry)
+
+        if action == MERGE_POST_ACTION_ADD_REMOVE:
+            self._device.firmware = [e for e in self._device.firmware if e.id not in source_ids]
+        elif action == MERGE_POST_ACTION_ADD_DESELECT:
+            for entry in self._device.firmware:
+                if entry.id in source_ids:
+                    entry.enabled = False
+        # MERGE_POST_ACTION_ADD_ONLY: merged bin added, source bins left as-is.
+
         self._reload_table()
         self.firmware_changed.emit(self._device.id)
 

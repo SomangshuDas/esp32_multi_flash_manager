@@ -9,7 +9,11 @@ The application's top-level QMainWindow. Responsible for:
     to the relevant panels
   - Project lifecycle (new/open/save/save-as) with unsaved-changes checks
   - Live console window management (one per device, created on demand)
-  - Theme switching and persistent window layout via AppSettings
+  - Theme switching (with live System Default detection) and persistent
+    window layout via AppSettings
+  - Dynamic chip-support detection (queried from esptool at startup) fed
+    into every chip dropdown/validator
+  - Interface Lock: Settings Lock and Full Lock, grouped under Tools -> Lock Interface
 
 This module intentionally contains no flashing logic and no file-format
 logic itself — it delegates to the controllers/managers and only handles
@@ -22,7 +26,7 @@ import hashlib
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -64,13 +68,19 @@ from app.ui.shortcuts_dialog import ShortcutsDialog
 from app.ui.theme import stylesheet_for
 from app.ui.validation_dialog import ValidationReportDialog
 from app.utilities.app_settings import get_settings
+from app.utilities.chip_detect import detect_supported_chips, find_unsupported_chips
 from app.utilities.constants import (
     APP_NAME,
     APP_VERSION,
     DEFAULT_SERIAL_MONITOR_BAUD,
+    DEFAULT_THEME,
     LIVE_LOG_MAX_LINES,
     PROJECT_FILE_FILTER,
     SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH,
+    SETTINGS_KEY_THEME,
+    THEME_DARK,
+    THEME_LIGHT,
+    THEME_SYSTEM,
     USER_MANUAL_URL,
 )
 from app.utilities.helpers import resource_path, safe_filename
@@ -90,6 +100,13 @@ class MainWindow(QMainWindow):
 
         self.settings = get_settings()
 
+        # ---------------- Chip support (dynamic, from esptool) ----------------
+        # Queried once at startup rather than hardcoded so newly-added
+        # esptool chip targets show up automatically (see chip_detect.py).
+        chip_result = detect_supported_chips()
+        self.supported_chips: list[str] = chip_result.chips
+        self._chip_detection = chip_result
+
         # ---------------- Controllers ----------------
         self.project_controller = ProjectController(self)
         self.device_controller = DeviceController(self.project_controller.project, self)
@@ -103,11 +120,23 @@ class MainWindow(QMainWindow):
         self._had_saved_geometry = False
         self._all_actions: list[QAction] = []
         self._shortcut_actions: dict[str, QAction] = {}
+        self._factory_mode_locked = False
+        # Menu actions that Settings Lock disables on top of
+        # the widget-level locks (see _set_factory_mode_locked).
+        self._factory_lock_actions: list[QAction] = []
 
         self._build_ui()
         self._build_menus_and_toolbar()
         self._wire_signals()
-        self._apply_theme(self.settings.value("theme", "dark"))
+        self.firmware_panel.set_supported_chips(self.supported_chips)
+        self.settings_widget.set_chip_options(self.supported_chips)
+        self._apply_theme(self.settings.value(SETTINGS_KEY_THEME, DEFAULT_THEME))
+        self._connect_system_theme_watcher()
+        if not chip_result.dynamic:
+            logger.warning(
+                "Chip support list is using the built-in fallback (esptool "
+                "detection failed: %s)", chip_result.error,
+            )
 
         # Interface Lock overlay: created hidden, covers the whole window
         # (see resizeEvent) only while locked.
@@ -194,13 +223,17 @@ class MainWindow(QMainWindow):
         self._add_action(
             devices_menu, "Add Device", "", self.device_panel.add_device_requested.emit, action_id="add_device",
         )
-        self._add_action(devices_menu, "Batch Edit...", "", self._on_batch_edit, action_id="batch_edit")
-        self._add_action(devices_menu, "Firmware Profiles...", "", self._on_open_profiles)
+        batch_edit_action = self._add_action(devices_menu, "Batch Edit...", "", self._on_batch_edit, action_id="batch_edit")
+        profiles_action = self._add_action(devices_menu, "Firmware Profiles...", "", self._on_open_profiles)
         devices_menu.addSeparator()
-        self._add_action(
+        assign_firmware_action = self._add_action(
             devices_menu, "Assign Firmware Set to Devices...", "",
             self._on_assign_firmware_set, action_id="assign_firmware_set",
         )
+        # These all mutate ports/firmware/flash settings across one or more
+        # devices, so Settings Lock disables them alongside
+        # the Firmware/Device Settings panels themselves.
+        self._factory_lock_actions.extend([batch_edit_action, profiles_action, assign_firmware_action])
 
         # ---- Flash menu ----
         flash_menu = menu_bar.addMenu("&Flash")
@@ -228,7 +261,12 @@ class MainWindow(QMainWindow):
         )
         tools_menu.addSeparator()
         self._add_action(tools_menu, "Set Interface Lock Key...", "", self._on_set_lock_key)
-        self._add_action(tools_menu, "Lock Interface", "", self._on_lock_interface, action_id="lock_interface")
+        lock_menu = tools_menu.addMenu("Lock Interface")
+        self.factory_lock_action = self._add_action(
+            lock_menu, "Settings Lock", "", self._on_toggle_factory_lock,
+            checkable=True, action_id="factory_mode_lock",
+        )
+        self._add_action(lock_menu, "Full Lock", "", self._on_lock_interface, action_id="lock_interface")
 
         # ---- Help menu ----
         help_menu = menu_bar.addMenu("&Help")
@@ -404,11 +442,38 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Firmware profiles
     # ------------------------------------------------------------------
+    def _exclude_busy_devices(self, device_ids: list[str]) -> tuple[list[str], list[str]]:
+        """
+        Split `device_ids` into (safe_ids, busy_names). Batch Edit, Assign
+        Firmware Set, and Firmware Profile application all rewrite a
+        device's ports/firmware/flash settings -- doing that to a device
+        that's mid-upload would either be silently overwritten once the
+        upload finishes or corrupt what's currently being flashed. Saving
+        the project itself is unaffected by this and stays allowed at all
+        times, per the "(Saving Allowed)" carve-out for this restriction.
+        """
+        safe_ids: list[str] = []
+        busy_names: list[str] = []
+        for device_id in device_ids:
+            if self.flash_controller.is_busy(device_id):
+                device = self.device_controller.get_device(device_id)
+                busy_names.append(device.name if device else device_id)
+            else:
+                safe_ids.append(device_id)
+        return safe_ids, busy_names
+
     def _on_open_profiles(self) -> None:
         device_id = self.device_panel.selected_device_ids()
         device = self.device_controller.get_device(device_id[0]) if device_id else None
         if device is None:
             QMessageBox.information(self, "Firmware Profiles", "Select a device first.")
+            return
+        if self.flash_controller.is_busy(device.id):
+            QMessageBox.warning(
+                self, "Firmware Profiles",
+                f"'{device.name}' is currently uploading. Wait for it to finish (or cancel it) "
+                "before applying a firmware profile.",
+            )
             return
         dialog = ProfileDialog(device, self)
         if dialog.exec() and dialog.chosen_profile is not None:
@@ -420,17 +485,28 @@ class MainWindow(QMainWindow):
 
     def _on_batch_edit(self) -> None:
         selected_ids = self.device_panel.selected_device_ids()
-        dialog = BatchEditDialog(len(selected_ids), self)
+        dialog = BatchEditDialog(len(selected_ids), self, supported_chips=self.supported_chips)
         if dialog.exec():
             field = dialog.selected_field()
             value = dialog.selected_value()
             if dialog.apply_to_all():
-                self.device_controller.apply_to_all(field, value)
+                target_ids = [d.id for d in self.device_controller.devices()]
             else:
                 if not selected_ids:
                     QMessageBox.information(self, "Batch Edit", "No devices selected.")
                     return
-                self.device_controller.apply_to_selected(selected_ids, field, value)
+                target_ids = selected_ids
+
+            target_ids, busy_names = self._exclude_busy_devices(target_ids)
+            if busy_names:
+                QMessageBox.warning(
+                    self, "Batch Edit",
+                    "Skipped currently-uploading device(s): " + ", ".join(busy_names),
+                )
+            if not target_ids:
+                return
+
+            self.device_controller.apply_to_selected(target_ids, field, value)
             self.device_panel.rebuild(self.device_controller.devices())
             selected = self.device_panel.selected_device_ids()
             if selected:
@@ -464,6 +540,15 @@ class MainWindow(QMainWindow):
 
         target_ids = self._choose_assign_firmware_targets(entries, folder, selected_ids, all_ids)
         if target_ids is None:
+            return
+
+        target_ids, busy_names = self._exclude_busy_devices(target_ids)
+        if busy_names:
+            QMessageBox.warning(
+                self, "Assign Firmware Set",
+                "Skipped currently-uploading device(s): " + ", ".join(busy_names),
+            )
+        if not target_ids:
             return
 
         updated = self.device_controller.apply_firmware_to_devices(target_ids, entries)
@@ -525,11 +610,66 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Set Interface Lock Key", "Interface lock key saved.")
         return True
 
+    # ------------------------------------------------------------------
+    # Settings Lock
+    # ------------------------------------------------------------------
+    def _on_toggle_factory_lock(self, checked: bool) -> None:
+        """
+        Settings Lock: unlike Full Lock, the window stays
+        usable (uploads, Serial Monitor, viewing logs still work) -- only
+        the controls that change WHAT gets flashed and WHERE are disabled:
+        ports, chip/flash settings, the firmware list (including Merge
+        Bins), Batch Edit, Assign Firmware Set, Firmware Profiles, and
+        deleting devices. See _set_factory_mode_locked for the actual
+        widget-level enforcement.
+        """
+        if checked:
+            if not self.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH):
+                QMessageBox.information(
+                    self, "Settings Lock",
+                    "No unlock key is set yet. Set one now, then try again.",
+                )
+                self.factory_lock_action.blockSignals(True)
+                self.factory_lock_action.setChecked(False)
+                self.factory_lock_action.blockSignals(False)
+                self._on_set_lock_key()
+                return
+            self._set_factory_mode_locked(True)
+            self.statusBar().showMessage("Settings locked.", 4000)
+        else:
+            key, ok = QInputDialog.getText(
+                self, "Unlock Settings", "Unlock key:", QLineEdit.EchoMode.Password,
+            )
+            stored_hash = self.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH)
+            if not ok:
+                # User cancelled the prompt -- stay locked, keep the
+                # checkbox reflecting reality instead of silently unlocking.
+                self.factory_lock_action.blockSignals(True)
+                self.factory_lock_action.setChecked(True)
+                self.factory_lock_action.blockSignals(False)
+                return
+            if not key or self._hash_lock_key(key) != stored_hash:
+                QMessageBox.warning(self, "Unlock Settings", "Incorrect key.")
+                self.factory_lock_action.blockSignals(True)
+                self.factory_lock_action.setChecked(True)
+                self.factory_lock_action.blockSignals(False)
+                return
+            self._set_factory_mode_locked(False)
+            self.statusBar().showMessage("Settings unlocked.", 3000)
+
+    def _set_factory_mode_locked(self, locked: bool) -> None:
+        self._factory_mode_locked = locked
+        self.firmware_panel.set_factory_locked(locked)
+        self.settings_widget.set_factory_locked(locked)
+        self.device_panel.set_deletion_locked(locked)
+        for action in self._factory_lock_actions:
+            action.setEnabled(not locked)
+
     def _on_lock_interface(self) -> None:
         if not self.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH):
             QMessageBox.information(
-                self, "Lock Interface",
-                "No unlock key is set yet. Set one now, then Lock Interface again.",
+                self, "Full Lock",
+                "No unlock key is set yet. Set one now, then Full Lock again.",
             )
             self._on_set_lock_key()
             return
@@ -537,7 +677,7 @@ class MainWindow(QMainWindow):
         open_windows = self._open_secondary_window_titles()
         if open_windows:
             QMessageBox.information(
-                self, "Lock Interface",
+                self, "Full Lock",
                 "Close the following window(s) before locking the interface:\n\n"
                 + "\n".join(f"- {title}" for title in open_windows),
             )
@@ -614,7 +754,9 @@ class MainWindow(QMainWindow):
         if not devices:
             return
 
-        report = validate_devices(devices, self._connected_ports, self._monitor_ports())
+        report = validate_devices(
+            devices, self._connected_ports, self._monitor_ports(), supported_chips=self.supported_chips,
+        )
         if report.has_errors:
             ValidationReportDialog(report, self).exec()
             return
@@ -814,6 +956,29 @@ class MainWindow(QMainWindow):
         self._live_consoles.clear()
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION} — {project.project_name}")
         self._refresh_recent_menu()
+        self._warn_about_unsupported_chips(project.devices)
+
+    def _warn_about_unsupported_chips(self, devices) -> None:
+        """
+        Clearly warn (once per load) if this project uses a chip the
+        currently-installed esptool no longer reports support for -- e.g.
+        the project was created with a newer/older esptool, or a chip
+        target esptool dropped. The project still loads and nothing is
+        changed automatically; this only surfaces the problem before the
+        user discovers it the hard way at Upload time.
+        """
+        unsupported = find_unsupported_chips(devices, self.supported_chips)
+        if not unsupported:
+            return
+        lines = "\n".join(f"  - {name}: '{chip}'" for name, chip in unsupported.items())
+        QMessageBox.warning(
+            self, "Unsupported Chip(s) in This Project",
+            "The installed esptool does not report support for the chip type used by "
+            f"the following device(s):\n\n{lines}\n\n"
+            "Uploading to these devices will likely fail until the chip type is corrected "
+            "in Device Settings or esptool is updated.\n\n"
+            f"Chips currently supported: {', '.join(self.supported_chips)}",
+        )
 
     def _on_project_saved(self, file_path: str) -> None:
         self.statusBar().showMessage(f"Project saved to {file_path}", 4000)
@@ -940,7 +1105,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self)
         if dialog.exec():
             dialog.save()
-            self._apply_theme(dialog.theme_combo.currentText())
+            self._apply_theme(dialog.selected_theme())
 
     def _on_open_shortcuts_dialog(self) -> None:
         dialog = ShortcutsDialog(self)
@@ -955,14 +1120,40 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl(USER_MANUAL_URL))
 
     def _apply_theme(self, theme_name: str) -> None:
+        """Apply `theme_name` ("system"/"dark"/"light") and persist the
+        PREFERENCE as given -- "system" is stored as-is (not the resolved
+        dark/light), so a later OS theme change is picked up automatically
+        the next time this is called (see _connect_system_theme_watcher)."""
         app = QApplication.instance()
         if app is not None:
             app.setStyleSheet(stylesheet_for(theme_name))
-        self.settings.setValue("theme", theme_name)
+        self.settings.setValue(SETTINGS_KEY_THEME, theme_name)
 
     def _toggle_theme(self) -> None:
-        current = self.settings.value("theme", "dark")
-        self._apply_theme("light" if current == "dark" else "dark")
+        current = self.settings.value(SETTINGS_KEY_THEME, DEFAULT_THEME)
+        self._apply_theme(THEME_LIGHT if current == THEME_DARK else THEME_DARK)
+
+    def _connect_system_theme_watcher(self) -> None:
+        """
+        Re-apply the theme whenever the OS's color scheme changes AND the
+        active preference is "System Default" -- so switching the desktop
+        from light to dark (or back) while the app is already open is
+        reflected immediately, not just on the next launch.
+        Qt's colorSchemeChanged signal needs Qt 6.5+ (this project already
+        requires PySide6>=6.6.0); if it's unavailable for any reason this
+        degrades gracefully to "system theme is resolved at launch/Settings
+        time only", never a crash.
+        """
+        try:
+            style_hints = QGuiApplication.styleHints()
+            style_hints.colorSchemeChanged.connect(self._on_system_theme_changed)
+        except Exception:  # noqa: BLE001 - live theme detection is a nice-to-have, not critical
+            logger.exception("Could not connect to the OS color-scheme-changed signal")
+
+    def _on_system_theme_changed(self, *_args) -> None:
+        if self.settings.value(SETTINGS_KEY_THEME, DEFAULT_THEME) == THEME_SYSTEM:
+            self._apply_theme(THEME_SYSTEM)
+            self.statusBar().showMessage("System theme changed — appearance updated.", 3000)
 
     def _on_check_updates(self) -> None:
         self.statusBar().showMessage("Checking for updates...", 4000)
@@ -1046,7 +1237,7 @@ class MainWindow(QMainWindow):
         if self.lock_overlay.isVisible():
             # Refuse to close while locked -- otherwise Alt+F4 / the
             # window-manager close button would bypass the lock entirely.
-            # Unlock first (Tools -> Lock Interface's shortcut), then Exit.
+            # Unlock first (Tools -> Lock Interface -> Full Lock), then Exit.
             event.ignore()
             self.statusBar().showMessage("Unlock the interface before closing.", 4000)
             return

@@ -54,6 +54,7 @@ def validate_devices(
     devices: list[DeviceConfig],
     connected_ports: set[str] | None = None,
     monitor_ports: set[str] | None = None,
+    supported_chips: list[str] | None = None,
 ) -> ValidationReport:
     """
     Validate a list of devices that are about to be flashed together.
@@ -72,12 +73,19 @@ def validate_devices(
     esptool cannot open a port that's already held open elsewhere, so any
     device whose port is in this set is flagged as an error telling the
     user to close that Serial Monitor before uploading.
+
+    `supported_chips` is the dynamically-detected chip list from
+    app.utilities.chip_detect (queried from the installed esptool at
+    startup). If omitted, falls back to the hardcoded SUPPORTED_CHIPS
+    constant so this function still works standalone/in tests.
     """
     report = ValidationReport()
     if connected_ports is None:
         connected_ports = get_port_device_names()
     if monitor_ports is None:
         monitor_ports = set()
+    if supported_chips is None:
+        supported_chips = SUPPORTED_CHIPS
 
     # --- Duplicate port detection (only across devices being uploaded) ---
     port_usage: dict[str, list[str]] = {}
@@ -90,7 +98,7 @@ def validate_devices(
                 report.add_error(name, f"Port {port} is used by multiple devices: {', '.join(names)}")
 
     for device in devices:
-        _validate_single_device(device, report, connected_ports, monitor_ports)
+        _validate_single_device(device, report, connected_ports, monitor_ports, supported_chips)
 
     return report
 
@@ -100,6 +108,7 @@ def _validate_single_device(
     report: ValidationReport,
     connected_ports: set[str],
     monitor_ports: set[str],
+    supported_chips: list[str],
 ) -> None:
     name = device.name
 
@@ -117,8 +126,12 @@ def _validate_single_device(
             f"A Serial Monitor is currently open on port {device.com_port}. Close it before uploading.",
         )
 
-    if device.chip_type not in SUPPORTED_CHIPS:
-        report.add_error(name, f"Unsupported/invalid chip selection: '{device.chip_type}'.")
+    if device.chip_type not in supported_chips:
+        report.add_error(
+            name,
+            f"Unsupported/invalid chip selection: '{device.chip_type}'. The installed esptool "
+            f"does not report support for this chip -- supported chips: {', '.join(supported_chips)}.",
+        )
 
     if device.flash_mode not in FLASH_MODES:
         report.add_error(name, f"Invalid flash mode: '{device.flash_mode}'.")

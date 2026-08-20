@@ -155,7 +155,13 @@ sudo usermod -a -G dialout $USER
   still runs GUI-only.
 - `--collect-all esptool` is important on every platform: esptool ships
   data files (e.g. stub loader binaries) that PyInstaller's default
-  analysis can miss; this flag forces them to be bundled.
+  analysis can miss; this flag forces them to be bundled. It's also what
+  makes dynamic chip-support detection work in a frozen build — at
+  startup (`app/utilities/chip_detect.py`) the app does a plain in-process
+  `from esptool.targets import CHIP_LIST` (separate from the
+  `sys.executable -m esptool` subprocess used for actual flashing, see
+  below) to build the Chip Type dropdown, which needs `esptool.targets`
+  bundled the same as everything else `--collect-all` pulls in.
 - Because `esptool` is launched via `sys.executable -m esptool` (see
   `app/flash_engine/esptool_wrapper.py`), a PyInstaller `--onefile` build
   works correctly on every OS: `sys.executable` inside a frozen app points

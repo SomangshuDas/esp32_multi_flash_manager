@@ -38,6 +38,7 @@ class DeviceSettingsWidget(QWidget):
         self._device: DeviceConfig | None = None
         self._loading = False
         self._locked = False
+        self._factory_locked = False
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -134,10 +135,12 @@ class DeviceSettingsWidget(QWidget):
         self._device = device
         self._locked = locked
         self._loading = True
-        enabled = device is not None and not locked
+        enabled = device is not None and not locked and not self._factory_locked
         title = f"Settings — {device.name}" if device else "Settings — (no device selected)"
         if device is not None and locked:
             title += "  (locked — flashing in progress)"
+        elif device is not None and self._factory_locked:
+            title += "  (locked — Settings Lock)"
         self.title_label.setText(title)
 
         # With nothing selected, show a freshly-created default device's
@@ -191,8 +194,26 @@ class DeviceSettingsWidget(QWidget):
         if self._device is not None and locked != self._locked:
             self.set_device(self._device, locked=locked)
 
+    def set_factory_locked(self, locked: bool) -> None:
+        """Settings Lock: disable every field without
+        losing the current device's displayed values."""
+        self._factory_locked = locked
+        self.refresh_display()
+
+    def set_chip_options(self, chips: list[str]) -> None:
+        """Called once at startup by MainWindow with the dynamically
+        detected chip list (see app/utilities/chip_detect.py) so this
+        dropdown always matches what the installed esptool can flash."""
+        current = self.chip_combo.currentText()
+        self.chip_combo.blockSignals(True)
+        self.chip_combo.clear()
+        self.chip_combo.addItems(chips)
+        if current in chips:
+            self.chip_combo.setCurrentText(current)
+        self.chip_combo.blockSignals(False)
+
     def _commit(self, *_args) -> None:
-        if self._loading or self._device is None or self._locked:
+        if self._loading or self._device is None or self._locked or self._factory_locked:
             return
         device = self._device
         device.name = self.name_edit.text().strip() or device.name

@@ -62,24 +62,37 @@ This document is for engineers extending or maintaining the codebase.
 | `app/workers/flash_worker.py` | `QThread` that drives one device's `esptool` subprocess |
 | `app/workers/port_watcher.py` | `QTimer`-polled COM port connect/disconnect detection |
 | `app/logging_setup/logger.py` | Rotating file handlers: application/flash/error/debug logs |
-| `app/utilities/constants.py` | Every shared literal (chip lists, baud rates, status strings, colors, shortcuts, settings keys, ...) |
+| `app/utilities/constants.py` | Every shared literal (fallback chip list, baud rates, status strings, colors, shortcuts, settings keys, merge/theme/lock constants, ...) |
+| `app/utilities/chip_detect.py` | Dynamic chip-support detection from the installed `esptool` package (`detect_supported_chips()`), plus `find_unsupported_chips()` for the project-load warning |
 | `app/utilities/helpers.py` | Pure functions: MD5, human-readable sizes/durations, hex address validation, ... |
 | `app/utilities/update_checker.py` | GitHub Releases polling + portable-vs-installer asset selection (`is_portable_build()`) |
 | `app/utilities/shortcuts.py` | User-customisable keyboard shortcuts: defaults + `AppSettings` overrides + duplicate detection |
-| `app/ui/lock_overlay.py` | `LockOverlay`: the full-window "Interface Locked" widget used by Tools → Lock Interface |
+| `app/firmware_manager/bin_merge.py` | Merge Bins: pre-merge validation (`validate_merge_entries`) + running `esptool merge-bin` (`run_merge`) |
+| `app/ui/merge_bin_dialog.py` | `MergeBinDialog`: pick source firmware, validate, merge, choose the post-merge Firmware Settings action |
+| `app/ui/lock_overlay.py` | `LockOverlay`: the full-window "Interface Locked" widget used by Tools → Lock Interface → Full Lock |
 | `app/ui/serial_monitor.py` | `SerialMonitorWidget` + background `_SerialReaderThread`: standalone, multi-port live serial console |
 | `app/ui/shortcuts_dialog.py` | `ShortcutsDialog`: remap every customisable shortcut, with live duplicate-conflict warnings |
 | `app/ui/*.py` | Qt widgets/dialogs — see file docstrings for each |
 
 ## 3. Extending chip / flash-parameter support
 
-All valid choices for chip type, baud rate, flash mode/frequency/size live
-in `app/utilities/constants.py` as plain lists — add a value there and it
-automatically appears in every relevant dropdown (`DeviceSettingsWidget`,
-`BatchEditDialog`) and the validator's allow-list. No other file needs to
-change unless the new chip requires a different `esptool` command-line
-flag shape, in which case extend `FlashCommandBuilder` in
-`esptool_wrapper.py`.
+**Chip type is no longer a hardcoded list.** At startup, `MainWindow`
+calls `app.utilities.chip_detect.detect_supported_chips()`, which imports
+`esptool.targets.CHIP_LIST` from the installed `esptool` package directly
+— so a newer esptool that adds a chip target shows up in every chip
+dropdown (`DeviceSettingsWidget`, `BatchEditDialog`, `MergeBinDialog`) and
+the validator's allow-list automatically, with no code change here. The
+`SUPPORTED_CHIPS` list in `constants.py` is now only the last-resort
+fallback used if that dynamic import fails (broken/missing esptool
+install) — don't rely on it being current.
+
+Baud rate and flash mode/frequency/size are still plain lists in
+`app/utilities/constants.py` — add a value there and it automatically
+appears in every relevant dropdown and the validator's allow-list. No
+other file needs to change unless the new chip/parameter requires a
+different `esptool` command-line flag shape, in which case extend
+`FlashCommandBuilder` in `esptool_wrapper.py` (also used by
+`bin_merge.py` for `merge-bin`).
 
 ## 4. Adding a new device setting
 
@@ -243,26 +256,52 @@ com_port/chip/baud/etc. fields can't be edited out from under the
 `FlashWorker` currently reading that same `DeviceConfig`. This
 intentionally does *not* extend to that device's Live Output window or
 an open Serial Monitor on its port -- neither of those touches
-`runtime.status`, so both remain fully interactive during an upload.
+`runtime.status`, so both remain fully interactive during an upload. The
+same guard extends to bulk reconfiguration: `MainWindow._exclude_busy_devices()`
+is called by `_on_batch_edit`, `_on_assign_firmware_set`, and
+`_on_open_profiles` before touching any device, filtering out (and
+warning about) any target that's mid-upload rather than silently
+rewriting settings out from under a running `FlashWorker`. Saving the
+project itself is never restricted by any of this.
 
-**Interface Lock** (`Tools → Lock Interface`) disables
-the menu bar, every toolbar, every dock widget, the central widget, and
-every `QAction` created via `MainWindow._add_action` (tracked in
-`self._all_actions` — disabling the container widgets alone does not
-stop a `QAction`'s window-level keyboard shortcut from still firing), and
-raises `app/ui/lock_overlay.py::LockOverlay` on top of the whole window.
-Before any of that, `_on_lock_interface()` calls
-`_open_secondary_window_titles()` to check for any visible Logs or
-Serial Monitor window (both are independent top-level widgets outside
-`centralWidget()`, so disabling the central widget alone would leave
-them live); if any are open, locking is refused and the user is told
-which window(s) to close first. The unlock key is never stored in
-plaintext: `Tools → Set Interface Lock Key...` hashes it with SHA-256
-(`hashlib.sha256`) before writing it to `AppSettings` under
-`SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH`, and `_on_unlock_attempt()`
-compares hashes. `closeEvent()` refuses to close the window while
-`lock_overlay.isVisible()`, so the lock can't be bypassed with the OS
-window-manager's close button.
+**Interface Lock has two independent modes, grouped under `Tools → Lock
+Interface`**, both gated behind the same key (hashed with
+`hashlib.sha256` under `AppSettings`' `SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH`,
+set via `Tools → Set Interface Lock Key...`):
+
+- **Settings Lock** (`Tools → Lock Interface → Settings Lock`,
+  `MainWindow._on_toggle_factory_lock` /
+  `_set_factory_mode_locked`) is a *lighter*, non-freezing lock: the
+  window stays fully interactive (uploads, Serial Monitor, viewing logs
+  keep working) but `FirmwarePanel.set_factory_locked()`,
+  `DeviceSettingsWidget.set_factory_locked()`, and
+  `DevicePanel.set_deletion_locked()` disable the firmware list (Merge
+  Bins included), all port/chip/flash-setting fields, and deleting
+  devices, and `self._factory_lock_actions` (Batch Edit, Assign Firmware
+  Set, Firmware Profiles) are disabled at the `QAction` level too.
+  Unlocking re-prompts for the key via `QInputDialog` — there's no
+  overlay for this mode since the rest of the window is meant to stay
+  usable.
+- **Full Lock** (`Tools → Lock Interface → Full Lock`,
+  `MainWindow._on_lock_interface` — the original "Lock
+  Interface" behaviour, moved into this submenu now that there are two
+  lock modes) disables the menu bar, every toolbar, every dock widget, the
+  central widget, and every `QAction` created via `MainWindow._add_action`
+  (tracked in `self._all_actions` — disabling the container widgets alone
+  does not stop a `QAction`'s window-level keyboard shortcut from still
+  firing), and raises `app/ui/lock_overlay.py::LockOverlay` on top of the
+  whole window. Before any of that, `_on_lock_interface()` calls
+  `_open_secondary_window_titles()` to check for any visible Logs or
+  Serial Monitor window (both are independent top-level widgets outside
+  `centralWidget()`, so disabling the central widget alone would leave
+  them live); if any are open, locking is refused and the user is told
+  which window(s) to close first. `_on_unlock_attempt()` compares key
+  hashes the same way. `closeEvent()` refuses to close the window while
+  `lock_overlay.isVisible()`, so the lock can't be bypassed with the OS
+  window-manager's close button.
+
+Both modes can be combined (Settings Lock active, then Full Lock on top);
+each is unlocked independently with the same key.
 
 ## 12. Keyboard shortcut customisation
 
@@ -282,6 +321,75 @@ conflicting actions) until every key sequence is unique. On accept,
 `self._shortcut_actions: dict[str, QAction]` — no menu rebuild needed.
 Actions without an `action_id` (e.g. a toolbar-only duplicate of a menu
 action) keep a fixed, non-customisable shortcut.
+
+## 13. System Default theme
+
+`app/utilities/constants.THEME_OPTIONS` is `["system", "dark", "light"]`,
+with `"system"` as `DEFAULT_THEME`. `"system"` is not itself a stylesheet
+— `app/ui/theme.py::resolve_theme()` turns it into a concrete `"dark"`/
+`"light"` choice by asking Qt for the OS's current color scheme via
+`QGuiApplication.styleHints().colorScheme()` (needs Qt 6.5+, comfortably
+covered by this project's `PySide6>=6.6.0` requirement); `stylesheet_for()`
+calls `resolve_theme()` internally so it always returns a real stylesheet
+even if handed `"system"` directly. `AppSettings` stores the *preference*
+as entered (including the literal string `"system"`), never the resolved
+value, so a later OS theme change is picked up automatically.
+
+Live detection while the app is running is `MainWindow._connect_system_theme_watcher()`,
+which connects `QGuiApplication.styleHints().colorSchemeChanged` to
+`_on_system_theme_changed()`; that handler re-applies the theme (which
+re-resolves `"system"`) only when `"system"` is the currently active
+preference, so it's a no-op if the user has explicitly picked Dark or
+Light. `View → Toggle Dark/Light Theme` (`MainWindow._toggle_theme`) is
+unchanged from before this feature: it flips between explicit Dark and
+Light only. Picking **System Default** is done from the Settings dialog's
+theme dropdown; the toggle shortcut is a fast way to step away from
+System Default to a specific theme without opening Settings.
+
+## 14. Bin Merge
+
+`app/firmware_manager/bin_merge.py` implements "Merge Bins": combining a
+device's separate firmware images into one flashable `.bin` via esptool's
+own `merge-bin` command (offline — no port/board needed, unlike
+write-flash). Two pieces:
+
+- `validate_merge_entries(entries, chip, output_path) -> MergeReport` —
+  the same category of pre-flight checks as
+  `flash_engine/validator.py`'s pre-upload validation (missing files,
+  invalid/duplicate addresses, byte-range overlaps via a sort-and-compare-
+  neighbours pass, plus merge-specific checks: no chip selected, "auto"
+  selected instead of a concrete chip, bad/unwritable output path).
+  `MergeIssue`/`MergeSeverity` mirror `validator.py`'s `ValidationIssue`/
+  `Severity` pattern but are deliberately a separate, lighter type (no
+  `device_name` field — a merge isn't scoped to one device's validation
+  report).
+- `run_merge(entries, chip, output_path, ...) -> MergeResult` — builds the
+  command via `FlashCommandBuilder.build_merge_bin_args()` (new method,
+  same builder flashing already uses) and runs it with a **synchronous**
+  `subprocess.run()`, deliberately *not* a `QThread`/`FlashWorker` the way
+  flashing is — merging is fast, local, and CPU/disk-bound, not a
+  multi-minute serial transfer, so blocking the calling thread briefly
+  (with a wait cursor, handled by the dialog) is the simpler and correct
+  choice here.
+
+`app/ui/merge_bin_dialog.py::MergeBinDialog` is the UI: a checkbox-per-row
+table of the device's firmware, a **Target Chip** dropdown (populated from
+the same dynamically-detected chip list as everywhere else, "auto"
+excluded since merge-bin needs a concrete chip), an output path field
+defaulting to `firmware_bin_folder()`'s result (the folder containing a
+file literally named `firmware.bin`, falling back to the first entry's
+folder) joined with the Settings-configured default filename, a
+**Validate** button, and an **After Merging** dropdown of the
+`MERGE_POST_ACTION_*` constants (add+de-select / add+remove / add-only /
+do-nothing), pre-selected from the Settings-configured default. On a
+successful merge the dialog constructs a new `FirmwareEntry` at `0x0` (a
+merged image already has every source file's offsets baked in — see
+esptool's own `merge_bin()` docs — so it's always flashed starting at
+0x0) and `accept()`s; `FirmwarePanel._open_merge_dialog()` reads
+`merged_entry()`/`post_action()`/`source_entry_ids()` back and applies the
+chosen post-merge action to the device's firmware list itself (add /
+de-select / remove), so `bin_merge.py` and `MergeBinDialog` never mutate
+`DeviceConfig` directly.
 
 ---
 

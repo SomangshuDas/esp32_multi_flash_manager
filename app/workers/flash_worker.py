@@ -10,6 +10,21 @@ Each device gets exactly one FlashWorker instance per upload attempt —
 this is what gives us true parallel flashing: N devices == N QThreads,
 each with its own subprocess, so a slow/stuck device never blocks the
 others (and the GUI thread is never touched by blocking I/O).
+
+Expected vs. unexpected failures
+---------------------------------
+Every code path through run() ends at _finish() with a status and a
+message — an EXPECTED upload failure (bad cable, board not in bootloader
+mode, wrong port, "No serial data received", a stalled/disconnected
+device, cancellation, ...) is reported as STATUS_FAILED/STATUS_CANCELLED
+with a clear, actionable message shown in the device's status badge, its
+Live Output console, and the flash history entry. None of that is allowed
+to propagate as a raised Python exception out of run() — the outermost
+try/except at the bottom of this method exists specifically so that an
+unplugged board never ends up in Anthropic-style "Unexpected Error" territory
+(main.py's global sys.excepthook, which is reserved for genuine bugs in
+this app, not routine hardware/cabling issues every flashing session runs
+into sooner or later).
 """
 
 from __future__ import annotations
@@ -96,6 +111,7 @@ class FlashWorker(QThread):
             port_lost = False
             wrote_any = False
             stalled = False
+            fatal_detail = ""
             for line in self._process.iter_lines(stall_timeout=FLASH_STALL_TIMEOUT_SECONDS):
                 if self._cancel_requested:
                     break
@@ -138,6 +154,14 @@ class FlashWorker(QThread):
                         self._update_speed(device_id, start_time)
                 elif event.kind == "verifying":
                     self.status_changed.emit(device_id, STATUS_VERIFYING)
+                elif event.kind == "fatal_error":
+                    # esptool's own "A fatal error occurred: ..." summary --
+                    # this is an EXPECTED failure mode (bad cable, board not
+                    # in bootloader mode, no serial data received, etc.),
+                    # not a bug in this app. Its message text is kept so
+                    # the eventual _finish() call surfaces exactly what
+                    # esptool itself said, instead of just an exit code.
+                    fatal_detail = event.detail
                 elif event.kind == "port_lost":
                     # The board isn't reachable on the selected port -- either
                     # it was never there (wrong port / not plugged in yet, in
@@ -179,13 +203,24 @@ class FlashWorker(QThread):
                     start_time,
                 )
             elif port_lost:
-                self._finish(
-                    device_id, False,
-                    f"Could not connect to {self.device.com_port} (port unavailable or already in "
-                    "use). Check the cable/connection, that the correct port is selected, and that "
-                    "no other program has it open, then retry.",
-                    start_time,
-                )
+                # Prefer esptool's own "A fatal error occurred: ..." text
+                # when we have it (e.g. "No serial data received.") -- it's
+                # usually more specific than this app's generic wording.
+                if fatal_detail:
+                    message = (
+                        f"Could not connect to {self.device.com_port}: {fatal_detail} Check the "
+                        "cable/connection, that the board is in bootloader mode, and that the "
+                        "correct port is selected, then retry."
+                    )
+                else:
+                    message = (
+                        f"Could not connect to {self.device.com_port} (port unavailable or already "
+                        "in use). Check the cable/connection, that the correct port is selected, "
+                        "and that no other program has it open, then retry."
+                    )
+                self._finish(device_id, False, message, start_time)
+            elif fatal_detail:
+                self._finish(device_id, False, fatal_detail, start_time)
             else:
                 self._finish(device_id, False, f"esptool exited with code {return_code}.", start_time)
 

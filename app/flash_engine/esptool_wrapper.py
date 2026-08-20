@@ -63,15 +63,38 @@ _RE_CONNECTING = re.compile(r"Connecting\.\.\.|Serial port")
 _RE_ERASING = re.compile(r"Erasing flash|Chip erase")
 _RE_HASH_VERIFIED = re.compile(r"Hash of data verified")
 _RE_HARD_RESET = re.compile(r"Hard resetting|Leaving\.\.\.")
-_RE_PORT_LOST = re.compile(r"could not open port|port is busy or doesn't exist", re.IGNORECASE)
+# Every phrasing esptool is known to use, across versions, for "this board
+# isn't answering on the selected port" -- whether it was never there, was
+# unplugged mid-flash, or never sent back anything at all. These are
+# EXPECTED hardware/cabling failures, not bugs in this app, so they are
+# recognized here and turned into a clear, actionable message in
+# FlashWorker._finish() instead of a raw "esptool exited with code N" (or,
+# worse, ever reaching the global exception handler -- see that module's
+# docstring for the full "no expected upload error should look like an app
+# crash" rationale).
+_RE_PORT_LOST = re.compile(
+    r"could not open port"
+    r"|port is busy or doesn't exist"
+    r"|no serial data received"
+    r"|failed to connect"
+    r"|timed out waiting for packet"
+    r"|a fatal error occurred.*serial",
+    re.IGNORECASE,
+)
+# esptool's own catch-all failure line, e.g. "A fatal error occurred: No
+# serial data received." Captured so its message text (usually the single
+# most useful sentence in the whole log) can be surfaced directly in the
+# Failed status/history entry instead of just an exit code.
+_RE_FATAL_ERROR = re.compile(r"A fatal error occurred:\s*(.+)", re.IGNORECASE)
 
 
 @dataclass
 class ProgressEvent:
-    kind: str  # "connecting" | "erasing" | "writing" | "verifying" | "resetting" | "port_lost" | "raw"
+    kind: str  # "connecting" | "erasing" | "writing" | "verifying" | "resetting" | "port_lost" | "fatal_error" | "raw"
     address: str = ""
     percent: int | None = None
     raw_line: str = ""
+    detail: str = ""  # human-readable failure text, set for "fatal_error"
 
 
 def parse_progress_line(line: str) -> ProgressEvent:
@@ -84,6 +107,9 @@ def parse_progress_line(line: str) -> ProgressEvent:
         return ProgressEvent(kind="erasing", raw_line=line)
     if _RE_HASH_VERIFIED.search(line):
         return ProgressEvent(kind="verifying", raw_line=line)
+    fatal_match = _RE_FATAL_ERROR.search(line)
+    if fatal_match:
+        return ProgressEvent(kind="fatal_error", raw_line=line, detail=fatal_match.group(1).strip())
     if _RE_PORT_LOST.search(line):
         return ProgressEvent(kind="port_lost", raw_line=line)
     if _RE_CONNECTING.search(line):
@@ -177,6 +203,41 @@ class FlashCommandBuilder:
         if device.chip_type and device.chip_type != "auto":
             args += ["--chip", device.chip_type]
         args += ["--port", device.com_port, "--baud", str(device.baud_rate), "chip-id"]
+        return args
+
+    @staticmethod
+    def build_merge_bin_args(
+        chip: str,
+        entries: list[tuple[str, str]],
+        output_path: str,
+        flash_mode: str = "keep",
+        flash_frequency: str = "keep",
+        flash_size: str = "keep",
+    ) -> list[str]:
+        """
+        Build the `esptool --chip <chip> merge-bin ...` command line that
+        combines several (address, file_path) pairs into one flashable
+        image. Unlike write-flash, merge-bin is entirely OFFLINE -- no
+        `--port`/`--baud` and no connected board required, since it only
+        reads the input files and writes one output file.
+
+        `chip` MUST be a concrete chip (not "auto") -- esptool itself
+        refuses merge-bin without one, since the merged image's layout
+        (and flash-size padding) depends on knowing which chip it's for.
+        """
+        args: list[str] = _esptool_command_prefix()
+        args += ["--chip", chip, "merge-bin", "--output", output_path]
+
+        if flash_mode and flash_mode != "keep":
+            args += ["--flash-mode", flash_mode]
+        if flash_frequency and flash_frequency != "keep":
+            args += ["--flash-freq", flash_frequency]
+        if flash_size and flash_size != "keep":
+            args += ["--flash-size", flash_size]
+
+        for address, file_path in entries:
+            args += [address, file_path]
+
         return args
 
 

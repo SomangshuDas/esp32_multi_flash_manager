@@ -2,7 +2,7 @@
 lock_overlay.py
 ================
 Full-window "Interface Locked" overlay used by MainWindow's Tools ->
-Lock Interface action (Ctrl+Shift+L). While shown it sits on top of the
+Full Lock action (Ctrl+Shift+L, under Tools -> Lock Interface). While shown it sits on top of the
 entire central widget/docks and is the only interactive surface in the
 window, so a locked bench PC can be left running mid-batch without a
 passer-by being able to touch device settings, firmware, or the Upload/

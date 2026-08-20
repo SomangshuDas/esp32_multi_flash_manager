@@ -53,6 +53,10 @@ manual `File → Open Project` step needed.
    also add raw extra `esptool` arguments in **Custom Flash Arguments**.
    Flash verification now happens automatically after every write (esptool
    v5+), so there is no longer a separate Verify toggle.
+   The **Chip Type** list is populated at startup from your installed
+   `esptool` itself, so it always matches what your copy of esptool can
+   actually flash (see §18 for what happens if a project uses a chip your
+   esptool no longer supports).
 3. Switch to the **Firmware** tab to add `.bin` files (see next section).
 
 To quickly configure many similar boards, configure one device fully, then
@@ -82,6 +86,41 @@ flashing (useful for temporarily excluding a file without deleting it).
 
 Addresses are edited in place in the table; entering something that isn't
 valid hex (e.g. `0x10000`) is rejected with a warning.
+
+### Merging bins
+
+Click **Merge Bins...** on the Firmware panel to combine a device's
+separate firmware images (bootloader, partition table, app, ...) into one
+flashable `.bin`, using `esptool`'s own `merge-bin` command:
+
+1. Check the box on each row you want included in the merge (defaults to
+   whatever is currently **On**).
+2. Pick a **Target Chip** — this must be a specific chip (not "Auto"),
+   since esptool needs to know the target chip to lay the merged image
+   out correctly.
+3. The **Output File** defaults to the same folder as `firmware.bin`
+   (falling back to the first file's folder if there's no file literally
+   named `firmware.bin`), using the default filename configured in
+   **Settings**. Change the filename and/or location with **Browse...**
+   or by editing the field directly.
+4. Click **Validate** to check for problems before merging — missing
+   files, invalid or duplicate addresses, and overlapping flash regions
+   are all caught here, with errors (blocking) shown separately from
+   warnings (which you can proceed past after confirming).
+5. Choose what happens to the source rows **After Merging**:
+   - *Add merged bin, de-select source bins* — the merged file is added
+     as a new row and the original rows are unchecked (**On**) but kept,
+     so you can still see what went into the merge.
+   - *Add merged bin, remove source bins* — the merged file is added and
+     the original rows are deleted from the device.
+   - *Add merged bin only* — the merged file is added; the source rows
+     are left exactly as they were.
+   - *Do nothing to Firmware Settings* — the file is written to disk but
+     nothing changes in the Firmware panel.
+   The option shown by default here comes from **Settings → Default
+   Post-Merge Action**.
+6. Click **Merge**. Merging runs entirely offline (no device connection
+   needed) and normally finishes in well under a second.
 
 ## 5. Uploading
 
@@ -224,10 +263,18 @@ reset it.
 
 ## 13. Settings
 
-**Tools → Settings...** lets you set the default theme (dark/light),
-default baud rate, and default flash mode for new devices, and gives you
-a one-click **Open Logs Folder** button if you need to send logs to
-support.
+**Tools → Settings...** lets you set:
+- **Theme** — **System Default** (follows your OS's light/dark setting,
+  live — no restart needed if you switch your OS theme while the app is
+  open), or explicit **Dark**/**Light**.
+- Default baud rate and default flash mode for new devices.
+- **Bin Merge defaults** — default merged filename, default output
+  location (leave blank to always use the same folder as `firmware.bin`),
+  and the default **Post-Merge Action** pre-selected in the Merge Bins
+  dialog (see §4 "Merging bins").
+
+A one-click **Open Logs Folder** button is also here if you need to send
+logs to support.
 
 ## 14. Serial Monitor
 
@@ -263,21 +310,41 @@ per-device progress, history, everything.
 
 ## 16. Locking the interface
 
-**Tools → Lock Interface** freezes the entire window —
-menus, toolbars, device list, firmware/settings panels, everything —
-behind a full-screen "Interface Locked" prompt, so you can walk away
-from a running batch on a shared bench PC without someone bumping a
-setting or cancelling an upload. If a Logs or Serial Monitor window is
-still open when you try to lock, locking is refused and you're told
-which window(s) to close first — those are separate windows the lock
-can't reach, so leaving one open would leave a hole in it.
+There are two lock modes, both under **Tools → Lock Interface**, and both
+protected by the same unlock key.
 
-The first time you lock, you'll be asked to set an **unlock key**
-(**Tools → Set Interface Lock Key...**, entered twice to confirm). The
-key itself is never stored — only its hash — so re-locking later just
-asks for that same key back. Closing the window (including the OS
-close button) is blocked while locked; unlock first, then exit normally
-if you need to.
+**Settings Lock** keeps the app fully usable — uploads,
+Serial Monitor, and viewing logs all keep working — but disables anything
+that reconfigures what gets flashed: ports, chip/flash settings, the
+firmware list (including Merge Bins), **Batch Edit**, **Assign Firmware
+Set to Devices**, **Firmware Profiles**, and deleting devices. This is
+meant for handing a bench to an operator who should run a job that's
+already configured for them, without being able to change it. Turning it
+off asks for the unlock key.
+
+**Full Lock** freezes the entire window — menus,
+toolbars, device list, firmware/settings panels, everything — behind a
+full-screen "Interface Locked" prompt, so you can walk away from a
+running batch on a shared bench PC without someone bumping a setting or
+cancelling an upload. If a Logs or Serial Monitor window is still open
+when you try to lock, locking is refused and you're told which window(s)
+to close first — those are separate windows the lock can't reach, so
+leaving one open would leave a hole in it.
+
+The first time you use either lock mode, you'll be asked to set an
+**unlock key** (**Tools → Set Interface Lock Key...**, entered twice to
+confirm). The key itself is never stored — only its hash — so locking
+later just asks for that same key back. Closing the window (including
+the OS close button) is blocked while Full Lock is active; unlock first,
+then exit normally if you need to. The two modes are independent and can
+be combined (e.g. Settings Lock on, then Full Lock on top before walking
+away).
+
+Separately, whether or not either lock is active: **Batch Edit**,
+**Assign Firmware Set to Devices**, and **Firmware Profiles** always
+refuse to modify a device that's currently uploading — that device is
+skipped with a warning rather than having its settings rewritten out from
+under a running upload. Saving your project is never restricted.
 
 ## 17. Keyboard shortcuts
 
@@ -301,7 +368,8 @@ Selected, Retry Failed) has no default shortcut and isn't customisable.
 | `Esc` | Cancel All |
 | `Ctrl+T` | Toggle Dark/Light Theme |
 | `Ctrl+M` | Open Serial Monitor |
-| `Ctrl+Shift+L` | Lock Interface |
+| `Ctrl+Shift+L` | Full Lock |
+| `Ctrl+Shift+F` | Settings Lock |
 | `Ctrl+Q` | Exit |
 
 ## 18. Troubleshooting
@@ -314,10 +382,23 @@ Selected, Retry Failed) has no default shortcut and isn't customisable.
   tile also flags it), and that no other program (Arduino IDE Serial
   Monitor, PlatformIO, this app's own Serial Monitor, etc.) is holding
   the port open.
+- **"No serial data received" / upload fails immediately** — this means
+  esptool couldn't get a response from the board at all: check the cable
+  (data cable, not charge-only), that the board is in bootloader mode if
+  it requires manually holding BOOT, and that the correct port is
+  selected. This is reported directly in the device's status, Live
+  Output, and history — not as an application error.
 - **"Close the Serial Monitor before uploading"** — this app's own
   built-in Serial Monitor (§14) is connected to the same port you're
   trying to flash; esptool can't share a port with anything else.
   Disconnect or close that Serial Monitor window, then upload again.
+- **"Unsupported/invalid chip selection" or a startup warning about an
+  unsupported chip** — the app asks your installed `esptool` at startup
+  which chips it supports (see §4); if a project uses a chip your
+  installed esptool doesn't report support for, you're warned on load and
+  the validator blocks uploading to that device. Update `esptool`
+  (`pip install --upgrade esptool`) or correct the chip type in Device
+  Settings.
 - **Duplicate port error at upload time** — two devices in your
   selection share the same port; only one can use it at once. Fix one
   of them in the Device Settings tab.

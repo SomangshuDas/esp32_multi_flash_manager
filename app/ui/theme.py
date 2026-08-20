@@ -9,9 +9,26 @@ PyInstaller build.
 
 Also duplicated as .qss files under resources/themes/ for reference /
 easy tweaking by whoever maintains the app later.
+
+"System Default" support
+-------------------------
+The persisted theme preference can be "system" as well as "dark"/"light"
+(see constants.THEME_OPTIONS). `resolve_theme()` turns that into a concrete
+"dark"/"light" choice by asking Qt for the OS's current color scheme via
+QGuiApplication.styleHints().colorScheme() (available on Qt 6.5+, which is
+comfortably covered by this project's PySide6>=6.6.0 requirement). Real-time
+detection of the user changing their OS theme while the app is running is
+handled by MainWindow, which connects to styleHints().colorSchemeChanged
+and re-applies the resolved stylesheet whenever it fires and "system" is
+the active preference.
 """
 
 from __future__ import annotations
+
+from app.logging_setup.logger import get_logger
+from app.utilities.constants import THEME_DARK, THEME_LIGHT, THEME_SYSTEM
+
+logger = get_logger(__name__)
 
 DARK_QSS = """
 QWidget {
@@ -242,4 +259,47 @@ QScrollBar::handle:vertical { background: #c7cbd1; border-radius: 5px; min-heigh
 
 
 def stylesheet_for(theme_name: str) -> str:
-    return DARK_QSS if theme_name == "dark" else LIGHT_QSS
+    """Return the QSS for a CONCRETE theme name ("dark"/"light"). If
+    "system" is passed by mistake, it is resolved first so this never
+    silently falls through to the dark stylesheet for a light-mode OS."""
+    resolved = resolve_theme(theme_name)
+    return DARK_QSS if resolved == THEME_DARK else LIGHT_QSS
+
+
+def system_prefers_dark() -> bool:
+    """
+    Best-effort query of the OS's current color scheme via Qt's own
+    QStyleHints -- the same mechanism Qt itself uses to decide native
+    widget palettes, so it stays correct across Windows/macOS/Linux without
+    any platform-specific code here. Returns True for dark, False for
+    light. If Qt can't tell (older Qt, an unsupported desktop environment,
+    or no QGuiApplication instance yet), dark is assumed since that has
+    always been this app's own default.
+    """
+    try:
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QGuiApplication
+
+        app = QGuiApplication.instance()
+        if app is None:
+            return True
+        scheme = QGuiApplication.styleHints().colorScheme()
+        if scheme == Qt.ColorScheme.Light:
+            return False
+        if scheme == Qt.ColorScheme.Dark:
+            return True
+        # Qt.ColorScheme.Unknown -- the platform theme plugin couldn't tell.
+        return True
+    except Exception:  # noqa: BLE001 - theme resolution must never crash the app
+        logger.exception("Could not determine the OS color scheme; defaulting to dark")
+        return True
+
+
+def resolve_theme(theme_name: str) -> str:
+    """Turn a persisted theme preference ("system"/"dark"/"light") into a
+    concrete "dark" or "light" choice ready to hand to stylesheet_for()."""
+    if theme_name == THEME_SYSTEM:
+        return THEME_DARK if system_prefers_dark() else THEME_LIGHT
+    if theme_name == THEME_LIGHT:
+        return THEME_LIGHT
+    return THEME_DARK

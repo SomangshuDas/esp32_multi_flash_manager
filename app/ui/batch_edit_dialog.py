@@ -16,26 +16,34 @@ from PySide6.QtWidgets import (
 from app.ui.widgets import make_scrollable
 from app.utilities.constants import BAUD_RATES, FLASH_FREQUENCIES, FLASH_MODES, FLASH_SIZES, SUPPORTED_CHIPS
 
-_FIELDS = {
-    "Upload Speed (baud rate)": ("baud_rate", "combo", [str(b) for b in BAUD_RATES]),
-    "Chip Type": ("chip_type", "combo", SUPPORTED_CHIPS),
-    "Flash Mode": ("flash_mode", "combo", FLASH_MODES),
-    "Flash Frequency": ("flash_frequency", "combo", FLASH_FREQUENCIES),
-    "Flash Size": ("flash_size", "combo", FLASH_SIZES),
-    "Erase Before Upload": ("erase_before_upload", "bool", None),
-    "Reset After Upload": ("reset_after_upload", "bool", None),
-    "Compression": ("compression", "bool", None),
-    "Stub Loader": ("stub_loader", "bool", None),
-}
+
+def _build_fields(supported_chips: list[str]) -> dict:
+    return {
+        "Upload Speed (baud rate)": ("baud_rate", "combo", [str(b) for b in BAUD_RATES]),
+        "Chip Type": ("chip_type", "combo", supported_chips),
+        "Flash Mode": ("flash_mode", "combo", FLASH_MODES),
+        "Flash Frequency": ("flash_frequency", "combo", FLASH_FREQUENCIES),
+        "Flash Size": ("flash_size", "combo", FLASH_SIZES),
+        "Erase Before Upload": ("erase_before_upload", "bool", None),
+        "Reset After Upload": ("reset_after_upload", "bool", None),
+        "Compression": ("compression", "bool", None),
+        "Stub Loader": ("stub_loader", "bool", None),
+    }
 
 
 class BatchEditDialog(QDialog):
     """After exec()==Accepted, read .selected_field() and .selected_value()."""
 
-    def __init__(self, selected_count: int, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, selected_count: int, parent: QWidget | None = None, supported_chips: list[str] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Batch Edit Devices")
         self.resize(420, 200)
+        # `supported_chips` is the dynamically-detected list from
+        # app.utilities.chip_detect, passed in by MainWindow; falls back to
+        # the hardcoded constant so this dialog still works standalone.
+        self._fields = _build_fields(list(supported_chips) if supported_chips else list(SUPPORTED_CHIPS))
 
         outer_layout = QVBoxLayout(self)
 
@@ -46,7 +54,7 @@ class BatchEditDialog(QDialog):
 
         form = QFormLayout()
         self.field_combo = QComboBox()
-        self.field_combo.addItems(list(_FIELDS.keys()))
+        self.field_combo.addItems(list(self._fields.keys()))
         self.field_combo.currentTextChanged.connect(self._on_field_changed)
         form.addRow("Setting:", self.field_combo)
 
@@ -73,7 +81,7 @@ class BatchEditDialog(QDialog):
         self._on_field_changed(self.field_combo.currentText())
 
     def _on_field_changed(self, field_label: str) -> None:
-        _, kind, options = _FIELDS[field_label]
+        _, kind, options = self._fields[field_label]
         if kind == "combo":
             self._combo_widget.clear()
             self._combo_widget.addItems(options)
@@ -85,11 +93,11 @@ class BatchEditDialog(QDialog):
         return self.scope_combo.currentIndex() == 0
 
     def selected_field(self) -> str:
-        return _FIELDS[self.field_combo.currentText()][0]
+        return self._fields[self.field_combo.currentText()][0]
 
     def selected_value(self):
         field_label = self.field_combo.currentText()
-        _, kind, _ = _FIELDS[field_label]
+        _, kind, _ = self._fields[field_label]
         if kind == "bool":
             return self._bool_widget.isChecked()
         text = self._combo_widget.currentText()
