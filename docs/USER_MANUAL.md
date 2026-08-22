@@ -33,11 +33,13 @@ manual `File → Open Project` step needed.
   column — including Name — can be resized by dragging its header edge to
   fit your workflow. Right-click a row (or multi-select with Ctrl/
   Shift-click) for a context menu with Upload Selected / Cancel Selected /
-  Open Serial Monitor (single selection only) / Duplicate / Remove.
-- **Right panel:** two tabs for whichever device is selected —
-  **Firmware** (its list of `.bin` files) and **Device Settings** (port,
+  Open Serial Monitor (single selection only) / Read Flash / eFuse / Chip
+  Info... (single selection only) / Duplicate / Remove.
+- **Right panel:** three tabs for whichever device is selected —
+  **Firmware** (its list of `.bin` files), **Device Settings** (port,
   chip, baud, flash mode/frequency/size, and the flashing option
-  checkboxes).
+  checkboxes), and **Security** (flash encryption / secure boot
+  provisioning — see §5).
 - **Bottom dock (Flash History):** every past flash attempt, with an
   **Export CSV** button.
 - **Status bar:** overall progress for the current batch and a running
@@ -122,7 +124,85 @@ flashable `.bin`, using `esptool`'s own `merge-bin` command:
 6. Click **Merge**. Merging runs entirely offline (no device connection
    needed) and normally finishes in well under a second.
 
-## 5. Uploading
+## 5. Flash Encryption & Secure Boot (Security tab)
+
+The **Security** tab (next to Firmware and Device Settings) provisions a
+device's flash encryption and/or secure boot, built entirely on the same
+`espsecure`/`espefuse` tools Espressif's own Flash Download Tool uses —
+this app never implements any cryptography itself, it only drives those
+tools. A permanent red banner on the tab reminds you that **burning eFuses
+is irreversible on real hardware**; nothing is ever written to eFuse until
+you explicitly confirm on the Provision dialog (see step 4 below).
+
+1. Select a device, open its **Security** tab, and pick a specific
+   **Chip Type** on Device Settings first — provisioning is disabled while
+   Chip Type is "Auto", since espefuse needs to know the exact target chip
+   to select the correct eFuse layout.
+2. Under **Flash Encryption**, check **Enable flash encryption**, choose a
+   **Mode** (*Development* keeps re-flashing plaintext images possible;
+   *Release* locks that down permanently), and choose a **Key**: either
+   *Generate a new key* (a fresh random AES key is created for you via
+   `espsecure`) or *Use an existing key file* (browse to a key file you
+   already have). On chips other than the original ESP32 you can also set
+   the **eFuse Key Block** to burn into (defaults to `BLOCK_KEY0`).
+3. Under **Secure Boot**, check **Enable secure boot**, pick a **Version**
+   (1 or 2) and, for V2, a signing **Scheme** (RSA-3072 or one of the ECDSA
+   curves), and a **Key** the same way as above — generated or existing.
+4. Click **Validate Settings** to catch problems up front (missing key
+   files, no chip selected, a key file that isn't the size esptool expects,
+   or — if you've already read this device's state via §6 below — a
+   device that already shows flash encryption enabled while this job would
+   flash it in plaintext).
+5. Click **Provision Device (Burn eFuses)...**. The Provision dialog
+   re-runs validation, then — only after you check the acknowledgement box
+   **and** type the exact confirmation phrase shown on screen — starts
+   burning. Progress streams live in the dialog's log, exactly like the
+   main Upload console.
+
+Once flash encryption is enabled with **Pass --encrypt on every Upload**
+checked (the default), the app automatically appends esptool's own
+`--encrypt` flag to every subsequent Upload for that device, so ordinary
+flashing keeps working through the same **Upload Selected** / **Upload
+All** flow described in §7.
+
+The **Advanced** group's *Custom eFuse Arguments* field works like Device
+Settings' Custom Flash Arguments — anything typed there is appended
+verbatim to the `espefuse` command line, for options this tab doesn't
+expose a dedicated control for.
+
+## 6. Read Flash / eFuse / Chip Info
+
+Available any time from **Tools → Read Flash / eFuse / Chip Info...** (asks
+which device if more than one is configured) or by right-clicking a single
+device in the list and choosing the same entry — independent of the
+Upload workflow and disabled only while that specific device is mid-flash.
+Everything in this dialog is **read-only**: nothing is written to flash or
+eFuse.
+
+Pick an **Operation** from the dropdown and click **Run**:
+
+- **Chip Info** — `esptool chip-id`.
+- **Flash ID** — `esptool flash-id` (SPI flash manufacturer/device ID and
+  size).
+- **eFuse Summary** — `espefuse summary`, a full table of every eFuse's
+  current value.
+- **Security Info** — `esptool get-security-info`, a focused report of the
+  chip's current flash-encryption/secure-boot state. Reading this (or the
+  eFuse Summary) also updates this app's own record of whether the device
+  looked encrypted, which feeds the Security tab's pre-provision and
+  pre-upload warnings described in §5.
+- **Read Flash Region...** — `esptool read-flash <address> <size>`; enter
+  the **Address** and **Size** (hex like `0x0`/`0x1000`, or decimal) and a
+  **Save To File** path.
+
+Output streams live into the dialog, the same way Live Output does during
+an Upload. Use **Save Output As Text...** to save whatever's currently on
+screen, or (for eFuse Summary / Read Flash Region) the dedicated **Save To
+File** field to have the read-back data written straight to disk by
+esptool/espefuse itself. The default save folder follows the same
+"remembers the last folder you used" behavior as Merge Bins' output field.
+
+## 7. Uploading
 
 - **Upload Selected** (`F5`, or the toolbar button) flashes only the
   devices currently selected in the list.
@@ -175,7 +255,7 @@ in-progress flash. This does **not** apply to that device's Live Output
 window or an open Serial Monitor on its port; both stay fully usable
 while the upload runs.
 
-## 6. Watching progress / live output
+## 8. Watching progress / live output
 
 Click **View Log** on any device row to open its **Live Output** window —
 the raw `esptool` console output, streamed in real time. Inside that
@@ -190,7 +270,7 @@ window you can:
 - **Clear** — empty the console.
 - **Auto-scroll** — checkbox to keep the view pinned to the latest line.
 
-## 7. Cancelling and retrying
+## 9. Cancelling and retrying
 
 - **Cancel Selected** / **Cancel All** stop in-progress flashes for the
   chosen devices (the `esptool` subprocess is terminated cleanly).
@@ -199,7 +279,7 @@ window you can:
 - **Retry Selected** re-uploads whatever is currently selected,
   regardless of its last status.
 
-## 8. Batch editing
+## 10. Batch editing
 
 **Devices → Batch Edit...** (`Ctrl+B`) lets you change one setting (e.g.
 baud rate, flash mode, or any of the boolean flags) across **All
@@ -207,7 +287,7 @@ devices** or just the **currently selected** ones, in one action — handy
 when you realize halfway through setup that every board should use
 230400 baud instead of the default 115200.
 
-## 9. Firmware Profiles
+## 11. Firmware Profiles
 
 **Devices → Firmware Profiles...** with a device selected lets you:
 
@@ -218,7 +298,7 @@ when you realize halfway through setup that every board should use
   can be reused on other devices or in future projects.
 - **Delete** a profile you no longer need.
 
-## 10. Projects
+## 12. Projects
 
 - **File → New Project** (`Ctrl+N`) starts fresh (asks first if you have
   unsaved changes).
@@ -248,12 +328,12 @@ Either way this launches the app with that project already open — the
 project on the command line is treated exactly like `File → Open Project`,
 including the same missing-firmware warning behavior above.
 
-## 11. Searching devices
+## 13. Searching devices
 
 Type into the search box above the device list to filter by name,
 port, chip type, or current status — the list narrows as you type.
 
-## 12. Flash history
+## 14. Flash history
 
 The **Flash History** dock (bottom of the window, toggle via **View**
 menu) accumulates every attempt across the session: date, time, device
@@ -261,7 +341,7 @@ name, port, firmware summary, duration, and result. Click **Export
 CSV...** to save it for QA/traceability records, or **Clear History** to
 reset it.
 
-## 13. Settings
+## 15. Settings
 
 **Tools → Settings...** lets you set:
 - **Theme** — **System Default** (follows your OS's light/dark setting,
@@ -276,7 +356,7 @@ reset it.
 A one-click **Open Logs Folder** button is also here if you need to send
 logs to support.
 
-## 14. Serial Monitor
+## 16. Serial Monitor
 
 **Tools → Open Serial Monitor...** (or right-click a device row →
 **Open Serial Monitor**) opens a live, two-way view of a board's serial
@@ -295,7 +375,7 @@ Two safeguards keep it from colliding with flashing:
   Monitor open is refused by the pre-upload validation page, which
   tells you exactly which port's monitor to close first.
 
-## 15. Assign Firmware Set to Devices
+## 17. Assign Firmware Set to Devices
 
 **Devices → Assign Firmware Set to Devices...** is built for the "one
 firmware set, many identical devices" workflow common on a
@@ -308,7 +388,7 @@ board. Every other feature works exactly as it does when importing
 firmware per-device: auto-detect, the pre-upload warning page, live
 per-device progress, history, everything.
 
-## 16. Locking the interface
+## 18. Locking the interface
 
 There are two lock modes, both under **Tools → Lock Interface**, and both
 protected by the same unlock key.
@@ -316,11 +396,12 @@ protected by the same unlock key.
 **Settings Lock** keeps the app fully usable — uploads,
 Serial Monitor, and viewing logs all keep working — but disables anything
 that reconfigures what gets flashed: ports, chip/flash settings, the
-firmware list (including Merge Bins), **Batch Edit**, **Assign Firmware
-Set to Devices**, **Firmware Profiles**, and deleting devices. This is
-meant for handing a bench to an operator who should run a job that's
-already configured for them, without being able to change it. Turning it
-off asks for the unlock key.
+firmware list (including Merge Bins), the Security tab (flash encryption
+/ secure boot settings and provisioning), **Batch Edit**, **Assign
+Firmware Set to Devices**, **Firmware Profiles**, and deleting devices.
+This is meant for handing a bench to an operator who should run a job
+that's already configured for them, without being able to change it.
+Turning it off asks for the unlock key.
 
 **Full Lock** freezes the entire window — menus,
 toolbars, device list, firmware/settings panels, everything — behind a
@@ -346,7 +427,7 @@ refuse to modify a device that's currently uploading — that device is
 skipped with a warning rather than having its settings rewritten out from
 under a running upload. Saving your project is never restricted.
 
-## 17. Keyboard shortcuts
+## 19. Keyboard shortcuts
 
 **Tools → Keyboard Shortcuts...** lets you remap any action below to a
 key sequence of your choice; the app warns you (and blocks Save) if two
@@ -372,7 +453,7 @@ Selected, Retry Failed) has no default shortcut and isn't customisable.
 | `Ctrl+Shift+F` | Settings Lock |
 | `Ctrl+Q` | Exit |
 
-## 18. Troubleshooting
+## 20. Troubleshooting
 
 - **"esptool could not be launched"** — make sure `pip install -r
   requirements.txt` succeeded and that `python -m esptool version` works
@@ -424,6 +505,21 @@ Selected, Retry Failed) has no default shortcut and isn't customisable.
   design (that's the point of a lock). You'll need to close the app from
   the OS (e.g. Task Manager / `kill`, losing unsaved project changes) and
   relaunch it.
+- **"espsecure/espefuse could not be launched"** — same root cause as the
+  esptool version above: confirm `python -m espsecure version` and
+  `python -m espefuse version` both work in the same environment (both
+  ship inside the `esptool` package, so reinstalling/upgrading `esptool`
+  fixes this too).
+- **"Provision Device" button is greyed out** — either no Chip Type is
+  selected (pick a specific chip, not "Auto", on Device Settings), or
+  neither Enable Flash Encryption nor Enable Secure Boot is checked on the
+  Security tab yet.
+- **Provisioning fails partway through with an eFuse-related error from
+  espefuse** — this app deliberately does not retry or paper over eFuse
+  errors; read the exact espefuse message in the Provision dialog's log
+  (e.g. a block already burned, or a purpose mismatch) and correct the
+  Security tab settings before trying again. Remember eFuse burns that did
+  complete before the failure are permanent even if a later step failed.
 - Logs are in the app's per-OS data folder — `Tools → Settings → Open
   Logs Folder` opens it directly on any platform. If you need the path
   manually: `%APPDATA%\ESP32MultiFlashManager\logs\` on Windows,

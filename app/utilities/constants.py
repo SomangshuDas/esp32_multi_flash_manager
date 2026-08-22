@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -146,6 +146,16 @@ FIRMWARE_FILE_FILTER = "Firmware Binary (*.bin)"
 # relaunch a second blank instance of the app and never actually flash.
 # --------------------------------------------------------------------------
 ESPTOOL_REEXEC_FLAG = "--_run-esptool"
+
+# Same fast-path re-exec trick as ESPTOOL_REEXEC_FLAG above, but for the two
+# sibling console tools that ship inside the `esptool` PyPI distribution:
+# `espsecure` (key generation / image signing for flash encryption + secure
+# boot) and `espefuse` (burning/reading eFuses). Security provisioning is
+# built entirely on these two official tools -- this app never implements
+# any cryptographic or eFuse-protocol logic itself (see
+# app/flash_engine/security_manager.py). See main.py for the interception.
+ESPSECURE_REEXEC_FLAG = "--_run-espsecure"
+ESPEFUSE_REEXEC_FLAG = "--_run-espefuse"
 
 # --------------------------------------------------------------------------
 # Misc UI constants
@@ -289,3 +299,105 @@ SETTINGS_KEY_CUSTOM_SHORTCUTS = "custom_shortcuts"
 # --------------------------------------------------------------------------
 DEFAULT_SERIAL_MONITOR_BAUD = 115200
 SERIAL_MONITOR_LINE_ENDINGS = ["None", "\\n (LF)", "\\r\\n (CRLF)", "\\r (CR)"]
+
+# --------------------------------------------------------------------------
+# Flash Encryption / Secure Boot provisioning
+# (app/flash_engine/security_manager.py, app/ui/security_settings_widget.py)
+# --------------------------------------------------------------------------
+# Everything here is a thin passthrough to `espsecure`/`espefuse` (both part
+# of the official `esptool` PyPI package) -- no cryptographic or eFuse
+# protocol logic lives in this app. See security_manager.py's module
+# docstring for the full command mapping.
+
+KEY_SOURCE_GENERATE = "generate"
+KEY_SOURCE_EXISTING = "existing"
+KEY_SOURCE_OPTIONS = [KEY_SOURCE_GENERATE, KEY_SOURCE_EXISTING]
+KEY_SOURCE_LABELS = {
+    KEY_SOURCE_GENERATE: "Generate a new key",
+    KEY_SOURCE_EXISTING: "Use an existing key file",
+}
+DEFAULT_KEY_SOURCE = KEY_SOURCE_GENERATE
+
+SECURE_BOOT_VERSIONS = ["1", "2"]
+DEFAULT_SECURE_BOOT_VERSION = "2"
+SECURE_BOOT_SCHEMES = ["rsa3072", "ecdsa192", "ecdsa256", "ecdsa384"]
+DEFAULT_SECURE_BOOT_SCHEME = "rsa3072"
+
+# Chips using the legacy (pre-"unified eFuse table") espefuse command shape,
+# where `burn-key <BLOCK> <KEYFILE>` takes a fixed purpose name baked into
+# the block itself (flash_encryption / secure_boot_v1 / secure_boot_v2)
+# rather than a separate --keypurpose argument. Every other chip esptool
+# supports uses the newer BLOCK_KEYn + explicit key-purpose scheme. Kept as
+# a simple set here (not queried dynamically like SUPPORTED_CHIPS) because
+# espefuse itself -- not esptool -- draws this line, and it has been stable
+# across every 5.x release; SecurityCommandBuilder falls back to the
+# unified-scheme shape for any chip not listed here, which is also correct
+# for brand-new chip targets a newer esptool/espefuse adds.
+LEGACY_EFUSE_CHIPS = {"esp32"}
+
+# espefuse burn-key purposes for chips on the unified eFuse table scheme.
+UNIFIED_KEY_PURPOSE_FLASH_ENCRYPTION = "XTS_AES_256_KEY"
+UNIFIED_KEY_PURPOSE_SECURE_BOOT_V2 = "SECURE_BOOT_DIGEST0"
+# espefuse block names, legacy scheme (ESP32 only).
+LEGACY_BLOCK_FLASH_ENCRYPTION = "flash_encryption"
+LEGACY_BLOCK_SECURE_BOOT_V1 = "secure_boot_v1"
+LEGACY_BLOCK_SECURE_BOOT_V2 = "secure_boot_v2"
+# Default unified-scheme key block. Devices that already used BLOCK_KEY0 for
+# something else need a different block -- exposed as an editable field, not
+# hardcoded further than this default.
+DEFAULT_UNIFIED_KEY_BLOCK = "BLOCK_KEY0"
+
+FLASH_ENCRYPTION_MODE_DEVELOPMENT = "development"
+FLASH_ENCRYPTION_MODE_RELEASE = "release"
+FLASH_ENCRYPTION_MODES = [FLASH_ENCRYPTION_MODE_DEVELOPMENT, FLASH_ENCRYPTION_MODE_RELEASE]
+FLASH_ENCRYPTION_MODE_LABELS = {
+    FLASH_ENCRYPTION_MODE_DEVELOPMENT: "Development (re-flashing plaintext images stays possible)",
+    FLASH_ENCRYPTION_MODE_RELEASE: "Release (locks down re-flashing -- irreversible)",
+}
+DEFAULT_FLASH_ENCRYPTION_MODE = FLASH_ENCRYPTION_MODE_DEVELOPMENT
+
+# Typed confirmation phrase required (in addition to a checkbox) before any
+# eFuse-burning operation is allowed to run, since burning eFuses on real
+# hardware is a one-way, irreversible operation -- see
+# app/ui/provision_confirm_dialog.py.
+PROVISION_CONFIRM_PHRASE = "BURN EFUSES"
+
+STATUS_GENERATING_KEY = "Generating Key"
+STATUS_SIGNING = "Signing"
+STATUS_BURNING = "Burning eFuses"
+STATUS_READING = "Reading"
+
+STATUS_COLORS.update({
+    STATUS_GENERATING_KEY: "#5b8def",
+    STATUS_SIGNING: "#5b8def",
+    STATUS_BURNING: "#e03131",
+    STATUS_READING: "#5b8def",
+})
+
+# settings.json keys for Read Flash / eFuse / Chip Info output defaults --
+# mirrors SETTINGS_KEY_MERGE_DEFAULT_LOCATION's "blank == ask every time /
+# same folder as last used" pattern rather than a fixed baked-in path.
+SETTINGS_KEY_READ_DEFAULT_LOCATION = "read_default_location"
+
+# --------------------------------------------------------------------------
+# Read Flash / Read eFuse / Chip Info (app/ui/read_device_dialog.py)
+# --------------------------------------------------------------------------
+READ_MODE_CHIP_INFO = "chip_info"
+READ_MODE_FLASH_ID = "flash_id"
+READ_MODE_EFUSE_SUMMARY = "efuse_summary"
+READ_MODE_SECURITY_INFO = "security_info"
+READ_MODE_READ_FLASH = "read_flash"
+
+READ_MODE_LABELS = {
+    READ_MODE_CHIP_INFO: "Chip Info",
+    READ_MODE_FLASH_ID: "Flash ID",
+    READ_MODE_EFUSE_SUMMARY: "eFuse Summary",
+    READ_MODE_SECURITY_INFO: "Security Info (encryption / secure boot state)",
+    READ_MODE_READ_FLASH: "Read Flash Region...",
+}
+
+# Default region read back by "Read Flash Region..." when the user hasn't
+# entered their own address/size -- the first 4KB, covering the bootloader
+# on chips that place it at the conventional 0x1000 address.
+DEFAULT_READ_FLASH_ADDRESS = "0x0"
+DEFAULT_READ_FLASH_SIZE = "0x1000"

@@ -62,6 +62,9 @@ from app.ui.history_panel import HistoryPanel
 from app.ui.live_console import LiveConsoleWidget
 from app.ui.lock_overlay import LockOverlay
 from app.ui.profile_dialog import ProfileDialog
+from app.ui.provision_dialog import ProvisionDialog
+from app.ui.read_device_dialog import ReadDeviceDialog
+from app.ui.security_settings_widget import SecuritySettingsWidget
 from app.ui.serial_monitor import SerialMonitorWidget
 from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
@@ -168,8 +171,10 @@ class MainWindow(QMainWindow):
         self.settings_tabs = right_tabs
         self.firmware_panel = FirmwarePanel()
         self.settings_widget = DeviceSettingsWidget()
+        self.security_widget = SecuritySettingsWidget()
         right_tabs.addTab(self.firmware_panel, "Firmware")
         right_tabs.addTab(self.settings_widget, "Device Settings")
+        right_tabs.addTab(self.security_widget, "Security")
 
         # Device list on the left, centralised Firmware + Device Settings
         # tabs on the right.
@@ -259,6 +264,9 @@ class MainWindow(QMainWindow):
             tools_menu, "Open Serial Monitor...", "", self._on_open_serial_monitor_dialog,
             action_id="open_serial_monitor",
         )
+        self._add_action(
+            tools_menu, "Read Flash / eFuse / Chip Info...", "", self._on_open_read_device_dialog,
+        )
         tools_menu.addSeparator()
         self._add_action(tools_menu, "Set Interface Lock Key...", "", self._on_set_lock_key)
         lock_menu = tools_menu.addMenu("Lock Interface")
@@ -338,6 +346,9 @@ class MainWindow(QMainWindow):
 
         self.firmware_panel.firmware_changed.connect(self._on_device_config_changed)
         self.settings_widget.settings_changed.connect(self._on_device_config_changed)
+        self.security_widget.settings_changed.connect(self._on_device_config_changed)
+        self.security_widget.provision_requested.connect(self._on_provision_requested)
+        self.device_panel.read_device_requested.connect(self._on_read_device_requested)
 
         # Flash controller -> device panel + history
         self.flash_controller.device_status_changed.connect(self._on_status_changed)
@@ -412,6 +423,7 @@ class MainWindow(QMainWindow):
         self.firmware_panel.set_device(device)
         locked = device is not None and self.flash_controller.is_busy(device.id)
         self.settings_widget.set_device(device, locked=locked)
+        self.security_widget.set_device(device, locked=locked)
 
     def _on_device_config_changed(self, device_id: str) -> None:
         device = self.device_controller.get_device(device_id)
@@ -419,6 +431,8 @@ class MainWindow(QMainWindow):
             self.device_panel.update_device_summary(device)
             if self.settings_widget.current_device_id() == device_id:
                 self.settings_widget.refresh_display()
+            if self.security_widget.current_device_id() == device_id:
+                self.security_widget.refresh_display()
         self.project_controller.mark_dirty()
 
     def _on_device_updated(self, device_id: str) -> None:
@@ -427,6 +441,8 @@ class MainWindow(QMainWindow):
             self.device_panel.update_device_summary(device)
             if self.settings_widget.current_device_id() == device_id:
                 self.settings_widget.refresh_display()
+            if self.security_widget.current_device_id() == device_id:
+                self.security_widget.refresh_display()
 
     def _on_devices_reset(self) -> None:
         self.device_panel.rebuild(self.device_controller.devices())
@@ -661,6 +677,7 @@ class MainWindow(QMainWindow):
         self._factory_mode_locked = locked
         self.firmware_panel.set_factory_locked(locked)
         self.settings_widget.set_factory_locked(locked)
+        self.security_widget.set_factory_locked(locked)
         self.device_panel.set_deletion_locked(locked)
         for action in self._factory_lock_actions:
             action.setEnabled(not locked)
@@ -820,6 +837,8 @@ class MainWindow(QMainWindow):
         # briefly reports is_busy() while the worker thread unwinds.
         if self.settings_widget.current_device_id() == device_id:
             self.settings_widget.set_locked(self.flash_controller.is_busy(device_id))
+        if self.security_widget.current_device_id() == device_id:
+            self.security_widget.set_locked(self.flash_controller.is_busy(device_id))
         self._refresh_dashboard()
 
     def _on_device_progress(self, device_id: str, percent: int, address: str) -> None:
@@ -1075,6 +1094,69 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Serial Monitor", "This device has no port selected yet.")
             return
         self._open_serial_monitor_for_port(device.com_port, device.baud_rate)
+
+    def _on_read_device_requested(self, device_id: str) -> None:
+        """Open the read-only "Read Flash / eFuse / Chip Info..." dialog for
+        one device -- available from the Tools menu (prompts for a device
+        selection) or the device table's right-click context menu (already
+        scoped to the row that was clicked)."""
+        device = self.device_controller.get_device(device_id)
+        if device is None:
+            return
+        if not device.com_port:
+            QMessageBox.information(self, "Read Flash / eFuse / Chip Info", "This device has no port selected yet.")
+            return
+        if self.flash_controller.is_busy(device_id):
+            QMessageBox.warning(
+                self, "Read Flash / eFuse / Chip Info",
+                f"'{device.name}' is currently uploading. Wait for it to finish (or cancel it) first.",
+            )
+            return
+        dialog = ReadDeviceDialog(device, self)
+        dialog.exec()
+
+    def _on_open_read_device_dialog(self) -> None:
+        """Tools menu entry point: prompts for which device to inspect if
+        more than one is selected/available, then opens the same dialog as
+        the per-row context menu action."""
+        selected_ids = self.device_panel.selected_device_ids()
+        devices = self.device_controller.devices()
+        if not devices:
+            QMessageBox.information(self, "Read Flash / eFuse / Chip Info", "Add a device first.")
+            return
+        if len(selected_ids) == 1:
+            self._on_read_device_requested(selected_ids[0])
+            return
+        names = [d.name for d in devices]
+        name, ok = QInputDialog.getItem(self, "Read Flash / eFuse / Chip Info", "Device:", names, 0, False)
+        if not ok or not name:
+            return
+        device = next((d for d in devices if d.name == name), None)
+        if device is not None:
+            self._on_read_device_requested(device.id)
+
+    def _on_provision_requested(self, device_id: str) -> None:
+        """Opens the Provision Device (Burn eFuses) dialog for the device
+        currently shown in the Security tab -- see ProvisionDialog for the
+        validation -> explicit confirmation -> burn sequence."""
+        device = self.device_controller.get_device(device_id)
+        if device is None:
+            return
+        if self.flash_controller.is_busy(device_id):
+            QMessageBox.warning(
+                self, "Provision Device",
+                f"'{device.name}' is currently uploading. Wait for it to finish (or cancel it) first.",
+            )
+            return
+        dialog = ProvisionDialog(device, self)
+        dialog.exec()
+        # Provisioning can change the device's on-disk key paths / burned
+        # state -- refresh the Security tab and mark the project dirty so
+        # the (persisted) key-path fields aren't left stale on screen or on
+        # the next Save.
+        if self.security_widget.current_device_id() == device_id:
+            self.security_widget.refresh_display()
+        self.project_controller.mark_dirty()
 
     def _open_serial_monitor_for_port(self, port: str, baud: int | None = None) -> None:
         if port in self._busy_ports():

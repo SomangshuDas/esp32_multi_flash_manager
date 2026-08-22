@@ -50,6 +50,7 @@ class DevicePanel(QWidget):
     selection_changed(str | None)   - device_id of the (first) selected row
     view_log_requested(str)         - device_id
     serial_monitor_requested(str)   - device_id
+    read_device_requested(str)      - device_id
     add_device_requested()
     remove_devices_requested(list)  - list[device_id]
     duplicate_devices_requested(list)
@@ -60,6 +61,7 @@ class DevicePanel(QWidget):
     selection_changed = Signal(object)
     view_log_requested = Signal(str)
     serial_monitor_requested = Signal(str)
+    read_device_requested = Signal(str)
     add_device_requested = Signal()
     remove_devices_requested = Signal(list)
     duplicate_devices_requested = Signal(list)
@@ -277,6 +279,9 @@ class DevicePanel(QWidget):
         serial_monitor_action = None
         if len(ids) == 1:
             serial_monitor_action = menu.addAction("Open Serial Monitor")
+        read_device_action = None
+        if len(ids) == 1:
+            read_device_action = menu.addAction("Read Flash / eFuse / Chip Info...")
         duplicate_action = menu.addAction("Duplicate")
         remove_action = menu.addAction("Remove")
         remove_action.setEnabled(not self._deletion_locked)
@@ -288,6 +293,8 @@ class DevicePanel(QWidget):
             self.cancel_requested.emit(ids)
         elif serial_monitor_action is not None and chosen == serial_monitor_action:
             self.serial_monitor_requested.emit(ids[0])
+        elif read_device_action is not None and chosen == read_device_action:
+            self.read_device_requested.emit(ids[0])
         elif chosen == duplicate_action:
             self.duplicate_devices_requested.emit(ids)
         elif chosen == remove_action:

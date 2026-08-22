@@ -33,7 +33,7 @@ from typing import Iterator
 
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
-from app.utilities.constants import ESPTOOL_REEXEC_FLAG
+from app.utilities.constants import ESPEFUSE_REEXEC_FLAG, ESPSECURE_REEXEC_FLAG, ESPTOOL_REEXEC_FLAG
 
 logger = get_logger(__name__)
 
@@ -140,6 +140,22 @@ def _esptool_command_prefix() -> list[str]:
     return [sys.executable, "-m", "esptool"]
 
 
+def espsecure_command_prefix() -> list[str]:
+    """Same re-exec trick as _esptool_command_prefix(), for `espsecure`
+    (key generation / image signing). Used by security_manager.py."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, ESPSECURE_REEXEC_FLAG]
+    return [sys.executable, "-m", "espsecure"]
+
+
+def espefuse_command_prefix() -> list[str]:
+    """Same re-exec trick as _esptool_command_prefix(), for `espefuse`
+    (burning/reading eFuses). Used by security_manager.py."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, ESPEFUSE_REEXEC_FLAG]
+    return [sys.executable, "-m", "espefuse"]
+
+
 class FlashCommandBuilder:
     """Builds the exact `esptool` CLI argument list for a given device."""
 
@@ -178,6 +194,16 @@ class FlashCommandBuilder:
         if not device.reset_after_upload:
             args += ["--after", "no-reset"]
 
+        # Flash encryption: on-the-fly encryption during write-flash itself
+        # (esptool's own `--encrypt` flag). This is "development mode"
+        # behaviour -- it requires the flash-encryption eFuse key to already
+        # be burned (see security_manager.py's provisioning flow) and only
+        # works while the device hasn't been locked into release mode.
+        # Nothing here implements the encryption -- esptool/the chip's own
+        # hardware AES engine does it.
+        if device.security.enable_flash_encryption and device.security.encrypt_on_write:
+            args += ["--encrypt"]
+
         if device.custom_flash_args.strip():
             # Allow power users to append raw extra arguments (e.g. --no-progress)
             args += device.custom_flash_args.strip().split()
@@ -203,6 +229,45 @@ class FlashCommandBuilder:
         if device.chip_type and device.chip_type != "auto":
             args += ["--chip", device.chip_type]
         args += ["--port", device.com_port, "--baud", str(device.baud_rate), "chip-id"]
+        return args
+
+    @staticmethod
+    def build_flash_id_args(device: DeviceConfig) -> list[str]:
+        """Build a command that prints SPI flash manufacturer/device ID and size."""
+        args: list[str] = _esptool_command_prefix()
+        if device.chip_type and device.chip_type != "auto":
+            args += ["--chip", device.chip_type]
+        args += ["--port", device.com_port, "--baud", str(device.baud_rate), "flash-id"]
+        return args
+
+    @staticmethod
+    def build_security_info_args(device: DeviceConfig) -> list[str]:
+        """
+        Build `esptool get-security-info` -- prints a report of the chip's
+        current flash-encryption/secure-boot eFuse state. Only supported on
+        chips with the unified eFuse table (everything except the original
+        ESP32 and ESP8266); the Read panel falls back to an eFuse summary
+        read (build_efuse_summary_args in security_manager.py) for those.
+        """
+        args: list[str] = _esptool_command_prefix()
+        if device.chip_type and device.chip_type != "auto":
+            args += ["--chip", device.chip_type]
+        args += ["--port", device.com_port, "--baud", str(device.baud_rate), "get-security-info"]
+        return args
+
+    @staticmethod
+    def build_read_flash_args(device: DeviceConfig, address: str, size: str, output_path: str) -> list[str]:
+        """
+        Build `esptool read-flash <address> <size> <output>` -- reads back
+        raw flash content to a local file. Read-only; makes no changes to
+        the device. `address`/`size` accept the same hex/decimal forms
+        esptool itself accepts (e.g. "0x1000" or "4096").
+        """
+        args: list[str] = _esptool_command_prefix()
+        if device.chip_type and device.chip_type != "auto":
+            args += ["--chip", device.chip_type]
+        args += ["--port", device.com_port, "--baud", str(device.baud_rate)]
+        args += ["read-flash", address, size, output_path]
         return args
 
     @staticmethod

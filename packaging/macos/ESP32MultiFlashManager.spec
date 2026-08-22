@@ -27,8 +27,11 @@ repo_root = Path(SPECPATH).resolve().parent.parent
 # instead of silently staying at a hardcoded default.
 app_version = os.environ.get("APP_VERSION", "1.0.0")
 
-# Equivalent of --collect-all esptool on the CLI: pull in esptool's data
-# files (stub loaders etc.) that static analysis alone would miss.
+# Equivalent of --collect-all esptool/espsecure/espefuse on the CLI: pull in
+# their data files (stub loaders etc.) that static analysis alone would
+# miss. espsecure and espefuse are separate top-level packages bundled
+# alongside esptool inside the same `esptool` PyPI distribution -- they
+# need their own collect_all() calls, not just esptool's.
 # NOTE: these must be passed into Analysis() below, not appended to
 # a.datas/a.binaries/a.hiddenimports afterward. collect_all() returns raw,
 # un-normalized (src, dest) tuples, while a.datas etc. are already
@@ -39,13 +42,15 @@ app_version = os.environ.get("APP_VERSION", "1.0.0")
 from PyInstaller.utils.hooks import collect_all
 
 esptool_datas, esptool_binaries, esptool_hiddenimports = collect_all("esptool")
+espsecure_datas, espsecure_binaries, espsecure_hiddenimports = collect_all("espsecure")
+espefuse_datas, espefuse_binaries, espefuse_hiddenimports = collect_all("espefuse")
 
 a = Analysis(
     [str(repo_root / "run.py")],
     pathex=[str(repo_root)],
-    binaries=esptool_binaries,
-    datas=[(str(repo_root / "resources"), "resources")] + esptool_datas,
-    hiddenimports=esptool_hiddenimports,
+    binaries=esptool_binaries + espsecure_binaries + espefuse_binaries,
+    datas=[(str(repo_root / "resources"), "resources")] + esptool_datas + espsecure_datas + espefuse_datas,
+    hiddenimports=esptool_hiddenimports + espsecure_hiddenimports + espefuse_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

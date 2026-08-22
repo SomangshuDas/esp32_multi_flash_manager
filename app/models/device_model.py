@@ -17,12 +17,94 @@ from app.models.firmware_model import FirmwareEntry
 from app.utilities.constants import (
     DEFAULT_BAUD,
     DEFAULT_CHIP,
+    DEFAULT_FLASH_ENCRYPTION_MODE,
     DEFAULT_FLASH_FREQ,
     DEFAULT_FLASH_MODE,
     DEFAULT_FLASH_SIZE,
+    DEFAULT_KEY_SOURCE,
+    DEFAULT_SECURE_BOOT_SCHEME,
+    DEFAULT_SECURE_BOOT_VERSION,
+    DEFAULT_UNIFIED_KEY_BLOCK,
     STATUS_WAITING,
 )
 from app.utilities.helpers import new_uuid
+
+
+@dataclass
+class SecurityConfig:
+    """
+    Per-device flash-encryption / secure-boot provisioning settings.
+
+    Nothing here performs cryptography itself -- it only records what the
+    user wants so app/flash_engine/security_manager.py can build the
+    equivalent `espsecure`/`espefuse` command lines. See that module's
+    docstring for the full command mapping.
+    """
+
+    # --- Flash encryption ---
+    enable_flash_encryption: bool = False
+    flash_encryption_mode: str = DEFAULT_FLASH_ENCRYPTION_MODE  # "development" | "release"
+
+    # --- Secure boot ---
+    enable_secure_boot: bool = False
+    secure_boot_version: str = DEFAULT_SECURE_BOOT_VERSION  # "1" | "2"
+    secure_boot_scheme: str = DEFAULT_SECURE_BOOT_SCHEME  # rsa3072/ecdsa192/ecdsa256/ecdsa384 (v2 only)
+
+    # --- Key sourcing (shared by both features; each burns its own block) ---
+    key_source: str = DEFAULT_KEY_SOURCE  # "generate" | "existing"
+    flash_encryption_key_path: str = ""
+    secure_boot_key_path: str = ""
+
+    # --- eFuse block/purpose targeting (unified-eFuse-table chips only;
+    #     ignored for legacy ESP32, which uses fixed block names) ---
+    flash_encryption_key_block: str = DEFAULT_UNIFIED_KEY_BLOCK
+    secure_boot_key_block: str = "BLOCK_KEY1"
+
+    # --- Safety knobs ---
+    keep_key_readable: bool = False  # maps to espefuse's --no-protect-key / --no-read-protect
+    encrypt_on_write: bool = True  # append esptool write-flash's --encrypt (dev-mode on-the-fly encryption)
+
+    # Power-user passthrough for espefuse invocations, mirroring
+    # DeviceConfig.custom_flash_args' existing pattern.
+    custom_efuse_args: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enable_flash_encryption": self.enable_flash_encryption,
+            "flash_encryption_mode": self.flash_encryption_mode,
+            "enable_secure_boot": self.enable_secure_boot,
+            "secure_boot_version": self.secure_boot_version,
+            "secure_boot_scheme": self.secure_boot_scheme,
+            "key_source": self.key_source,
+            "flash_encryption_key_path": self.flash_encryption_key_path,
+            "secure_boot_key_path": self.secure_boot_key_path,
+            "flash_encryption_key_block": self.flash_encryption_key_block,
+            "secure_boot_key_block": self.secure_boot_key_block,
+            "keep_key_readable": self.keep_key_readable,
+            "encrypt_on_write": self.encrypt_on_write,
+            "custom_efuse_args": self.custom_efuse_args,
+        }
+
+    @staticmethod
+    def from_dict(data: dict[str, Any]) -> "SecurityConfig":
+        return SecurityConfig(
+            enable_flash_encryption=data.get("enable_flash_encryption", False),
+            flash_encryption_mode=data.get("flash_encryption_mode", DEFAULT_FLASH_ENCRYPTION_MODE),
+            enable_secure_boot=data.get("enable_secure_boot", False),
+            secure_boot_version=data.get("secure_boot_version", DEFAULT_SECURE_BOOT_VERSION),
+            secure_boot_scheme=data.get("secure_boot_scheme", DEFAULT_SECURE_BOOT_SCHEME),
+            key_source=data.get("key_source", DEFAULT_KEY_SOURCE),
+            flash_encryption_key_path=data.get("flash_encryption_key_path", ""),
+            secure_boot_key_path=data.get("secure_boot_key_path", ""),
+            flash_encryption_key_block=data.get("flash_encryption_key_block", DEFAULT_UNIFIED_KEY_BLOCK),
+            secure_boot_key_block=data.get("secure_boot_key_block", "BLOCK_KEY1"),
+            keep_key_readable=data.get("keep_key_readable", False),
+            encrypt_on_write=data.get("encrypt_on_write", True),
+            custom_efuse_args=data.get("custom_efuse_args", ""),
+        )
+
+    def clone(self) -> "SecurityConfig":
+        return SecurityConfig.from_dict(self.to_dict())
 
 
 @dataclass
@@ -39,6 +121,14 @@ class DeviceRuntimeState:
     error_message: str = ""
     connected: bool = False
     log_lines: list[str] = field(default_factory=list)
+
+    # Populated by a "Read Flash / eFuse / Chip Info" -> Security Info read
+    # (see app/workers/read_worker.py); None means "unknown / never read",
+    # not "confirmed disabled". Used by the pre-upload validator to catch
+    # the foot-gun of flashing unencrypted firmware to a device that was
+    # already provisioned with flash encryption.
+    flash_encryption_detected: bool | None = None
+    secure_boot_detected: bool | None = None
 
 
 @dataclass
@@ -59,6 +149,10 @@ class DeviceConfig:
     stub_loader: bool = True
     custom_flash_args: str = ""
     firmware: list[FirmwareEntry] = field(default_factory=list)
+
+    # Flash encryption / secure boot provisioning settings for this device
+    # (see SecurityConfig above and app/flash_engine/security_manager.py).
+    security: SecurityConfig = field(default_factory=SecurityConfig)
 
     # Runtime state is kept on the model for convenience but is excluded
     # from persistence (see to_dict).
@@ -115,6 +209,15 @@ class DeviceConfig:
             custom_flash_args=self.custom_flash_args,
             firmware=[f.duplicate() for f in self.firmware],
         )
+        # Security settings are cloned too (a duplicated device is meant to
+        # be an exact template of the original) but the key SOURCE FILES
+        # themselves are simply referenced, not copied on disk -- if the
+        # original used a generated per-device key, the clone should
+        # generate its own rather than silently sharing key material.
+        clone.security = self.security.clone()
+        if self.security.key_source == "generate":
+            clone.security.flash_encryption_key_path = ""
+            clone.security.secure_boot_key_path = ""
         return clone
 
     # ------------------------------------------------------------------
@@ -136,6 +239,7 @@ class DeviceConfig:
             "stub_loader": self.stub_loader,
             "custom_flash_args": self.custom_flash_args,
             "firmware": [f.to_dict() for f in self.firmware],
+            "security": self.security.to_dict(),
         }
 
     @staticmethod
@@ -156,4 +260,5 @@ class DeviceConfig:
             custom_flash_args=data.get("custom_flash_args", ""),
             firmware=[FirmwareEntry.from_dict(f) for f in data.get("firmware", [])],
         )
+        device.security = SecurityConfig.from_dict(data.get("security", {}))
         return device

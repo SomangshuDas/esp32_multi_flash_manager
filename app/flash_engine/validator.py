@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from app.device_manager.port_scanner import get_port_device_names
+from app.flash_engine.security_manager import validate_security_settings
 from app.models.device_model import DeviceConfig
 from app.utilities.constants import SUPPORTED_CHIPS, FLASH_MODES
 from app.utilities.helpers import is_valid_hex_address
@@ -99,8 +100,26 @@ def validate_devices(
 
     for device in devices:
         _validate_single_device(device, report, connected_ports, monitor_ports, supported_chips)
+        _validate_single_device_security(device, report)
 
     return report
+
+
+def _validate_single_device_security(device: DeviceConfig, report: ValidationReport) -> None:
+    """
+    Fold this device's flash-encryption/secure-boot foot-gun checks (see
+    app/flash_engine/security_manager.py's validate_security_settings) into
+    the same pre-upload report shown before Upload -- missing key files,
+    no chip selected while security features are on, and flashing plaintext
+    firmware to a device already read back as flash-encryption-enabled all
+    surface here exactly like any other blocking pre-upload issue.
+    """
+    security_report = validate_security_settings(device)
+    for issue in security_report.issues:
+        if issue.is_error:
+            report.add_error(device.name, issue.message)
+        else:
+            report.add_warning(device.name, issue.message)
 
 
 def _validate_single_device(

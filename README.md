@@ -3,7 +3,8 @@
 A production-grade, cross-platform desktop application for flashing
 firmware onto an **unlimited number of ESP32 devices in parallel**, built
 on top of the official [`esptool`](https://github.com/espressif/esptool)
-backend for reliability.
+backend (plus its `espsecure`/`espefuse` companion tools for flash
+encryption, secure boot, and eFuse operations) for reliability.
 
 It is designed for manufacturing/production-floor use, where an operator
 may need to flash a bench of a dozen ESP32 boards at once, track results,
@@ -85,6 +86,21 @@ implementation for correctness.
   supports, so new esptool releases add new chips automatically. If a
   project uses a chip your installed esptool no longer supports, you're
   warned clearly on load instead of finding out only when Upload fails.
+- **Flash Encryption & Secure Boot provisioning.** A per-device
+  **Security** tab generates or imports flash-encryption/secure-boot keys
+  and burns them via `espsecure`/`espefuse` — the same official tools
+  Espressif's own Flash Download Tool relies on, never reimplemented here.
+  Burning eFuses is permanent on real hardware, so nothing runs until you
+  both check an acknowledgement box and type an exact confirmation phrase
+  on the Provision dialog; pre-flight validation catches missing key
+  files, no chip selected, and (once you've read a device back) flashing
+  plaintext firmware to a device that already shows encryption enabled.
+- **Read Flash / eFuse / Chip Info.** A read-only inspection panel
+  (`Tools → Read Flash / eFuse / Chip Info...`, or right-click a device),
+  independent of the upload workflow, built on esptool's/espefuse's own
+  chip-id/flash-id/get-security-info/read-flash/summary commands. Nothing
+  it runs ever writes to flash or eFuse; read-back data can be saved to a
+  file the same way Merge Bins' output is.
 - Dockable/resizable panels, persistent window
   layout, user-customisable keyboard shortcuts (`Tools → Keyboard
   Shortcuts...`, with duplicate-assignment detection), and right-click
@@ -107,10 +123,10 @@ implementation for correctness.
   - **Settings Lock** keeps the window fully usable —
     uploads, Serial Monitor, and viewing logs all keep working — but
     disables anything that reconfigures what gets flashed: ports,
-    chip/flash settings, the firmware list (including Merge Bins), Batch
-    Edit, Assign Firmware Set, Firmware Profiles, and deleting devices.
-    Meant for handing a bench to an operator who should run a
-    pre-configured job, not change it.
+    chip/flash settings, the firmware list (including Merge Bins), the
+    Security tab, Batch Edit, Assign Firmware Set, Firmware Profiles, and
+    deleting devices. Meant for handing a bench to an operator who should
+    run a pre-configured job, not change it.
   - **Full Lock** — the original behaviour — freezes
     the *entire* window behind an opaque overlay; nothing is reachable
     until the key is re-entered. Refuses to lock while a Logs or Serial
@@ -196,13 +212,16 @@ app/
   controllers/         DeviceController, FlashController, ProjectController
                         mediate between models and views (Controller layer)
   flash_engine/        esptool command builder/subprocess wrapper + the
-                        pre-upload validation engine
+                        pre-upload validation engine + security_manager.py
+                        (espsecure/espefuse command builder for flash
+                        encryption / secure boot / eFuse reads)
   project_manager/     .efmproj save/load + recent-projects list
   device_manager/      Live serial port scanning (pyserial)
   firmware_manager/    Firmware folder auto-detection + named profiles
   workers/             QThread workers: one FlashWorker per device for true
-                        parallel flashing, plus PortWatcher for live port
-                        polling
+                        parallel flashing, ProvisionWorker (eFuse burning)
+                        and ReadWorker (Read Flash/eFuse/Chip Info), plus
+                        PortWatcher for live port polling
   logging_setup/       Rotating log file configuration
   utilities/           Shared constants, helper functions, and the
                         cross-platform app-data / resource-path resolvers
@@ -237,7 +256,9 @@ extending the app (new chip support, new panels, a plugin system, etc.).
 - The official `esptool` PyPI package (installed via `requirements.txt`) —
   this app never reimplements the ESP32 flashing protocol itself, it
   drives `esptool` as a subprocess for maximum protocol correctness and
-  compatibility with future chips.
+  compatibility with future chips. Flash Encryption/Secure Boot
+  provisioning and eFuse reads are built the same way, on top of the same
+  package's `espsecure`/`espefuse` command-line tools.
 
 ## Continuous Integration
 

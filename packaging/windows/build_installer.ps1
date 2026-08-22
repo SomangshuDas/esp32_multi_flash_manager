@@ -31,6 +31,8 @@ try {
             --icon resources\icons\app_icon.ico `
             --add-data "resources;resources" `
             --collect-all esptool `
+            --collect-all espsecure `
+            --collect-all espefuse `
             run.py
         if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
     }

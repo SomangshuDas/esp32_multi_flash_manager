@@ -45,11 +45,17 @@ python run.py --debug
 
 ```bash
 python -m esptool version
+python -m espsecure version
+python -m espefuse version
 ```
 
-This should print the installed `esptool` version. If it fails, fix your
-Python environment before proceeding — the app calls `esptool` exactly
-this way (`python -m esptool ...`) under the hood, on every platform.
+This should print the installed `esptool`/`espsecure`/`espefuse` versions
+(all three ship inside the same `esptool` PyPI package). If any fail, fix
+your Python environment before proceeding — the app calls all three exactly
+this way (`python -m esptool ...` / `python -m espsecure ...` /
+`python -m espefuse ...`) under the hood, on every platform. `espsecure` and
+`espefuse` back the app's Flash Encryption / Secure Boot provisioning and
+Read Flash / eFuse / Chip Info features (see `app/flash_engine/security_manager.py`).
 
 ## 3. Package as a standalone executable (PyInstaller)
 
@@ -74,6 +80,8 @@ pyinstaller --noconfirm --windowed --onefile ^
   --icon resources\icons\app_icon.ico ^
   --add-data "resources;resources" ^
   --collect-all esptool ^
+  --collect-all espsecure ^
+  --collect-all espefuse ^
   run.py
 ```
 
@@ -107,6 +115,8 @@ pyinstaller --noconfirm --windowed --onefile \
   --icon resources/icons/app_icon.icns \
   --add-data "resources:resources" \
   --collect-all esptool \
+  --collect-all espsecure \
+  --collect-all espefuse \
   run.py
 ```
 
@@ -122,6 +132,8 @@ pyinstaller --noconfirm --onefile \
   --name ESP32MultiFlashManager \
   --add-data "resources:resources" \
   --collect-all esptool \
+  --collect-all espsecure \
+  --collect-all espefuse \
   run.py
 ```
 
@@ -153,20 +165,28 @@ sudo usermod -a -G dialout $USER
   its own log files and error dialogs, so a console isn't needed for
   normal use. Linux `--onefile` builds don't take `--windowed`; the app
   still runs GUI-only.
-- `--collect-all esptool` is important on every platform: esptool ships
-  data files (e.g. stub loader binaries) that PyInstaller's default
-  analysis can miss; this flag forces them to be bundled. It's also what
-  makes dynamic chip-support detection work in a frozen build — at
-  startup (`app/utilities/chip_detect.py`) the app does a plain in-process
+- `--collect-all esptool --collect-all espsecure --collect-all espefuse` is
+  important on every platform: all three ship data files (e.g. stub loader
+  binaries) that PyInstaller's default analysis can miss; these flags force
+  them to be bundled. `espsecure`/`espefuse` are separate top-level packages
+  distributed alongside `esptool` inside the same PyPI package — collecting
+  `esptool` alone does **not** pull them in, they need their own
+  `--collect-all`. `--collect-all esptool` is also what makes dynamic
+  chip-support detection work in a frozen build — at startup
+  (`app/utilities/chip_detect.py`) the app does a plain in-process
   `from esptool.targets import CHIP_LIST` (separate from the
   `sys.executable -m esptool` subprocess used for actual flashing, see
   below) to build the Chip Type dropdown, which needs `esptool.targets`
   bundled the same as everything else `--collect-all` pulls in.
-- Because `esptool` is launched via `sys.executable -m esptool` (see
-  `app/flash_engine/esptool_wrapper.py`), a PyInstaller `--onefile` build
+- Because `esptool`/`espsecure`/`espefuse` are each launched via
+  `sys.executable -m <tool>` (see `app/flash_engine/esptool_wrapper.py` and
+  `app/flash_engine/security_manager.py`), a PyInstaller `--onefile` build
   works correctly on every OS: `sys.executable` inside a frozen app points
-  at the bundled executable itself, and esptool's package is importable
-  from inside it since it was collected into the bundle.
+  at the bundled executable itself, and all three packages are importable
+  from inside it since they were collected into the bundle. `app/main.py`
+  intercepts a hidden re-exec flag for each tool at startup and dispatches
+  straight to that tool's own CLI `main()`, skipping Qt/GUI import overhead
+  entirely.
 - Icons and themes are resolved through `resource_path()` in
   `app/utilities/helpers.py`, which checks for PyInstaller's `sys._MEIPASS`
   first — this is what keeps the window icon working identically whether
@@ -274,7 +294,11 @@ get what they need from the same release.
    `Flash → Upload Selected` against a known-good firmware image to
    confirm the bundled `esptool` launches correctly from inside the frozen
    executable.
-4. Confirm the app's log directory is being written to — see
+4. If testing the Security tab, try Tools → Read Flash / eFuse / Chip
+   Info... against a real board to confirm the bundled `espefuse` also
+   launches correctly from inside the frozen executable (this is a
+   read-only check — it does not burn anything).
+5. Confirm the app's log directory is being written to — see
    `docs/DEVELOPER_DOCUMENTATION.md` → **Logging** for the exact path on
    your OS.
 

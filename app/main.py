@@ -13,31 +13,44 @@ import traceback
 from pathlib import Path
 
 # --------------------------------------------------------------------------
-# esptool re-exec fast path -- checked FIRST, before any PySide6/app.ui
-# imports, and using only the stdlib. This matters for frozen (PyInstaller)
-# builds: `sys.executable` there is this app's own .exe, so the flash engine
-# launches N of these subprocesses in parallel (one per device) with a
-# hidden flag instead of shelling out to a Python interpreter that doesn't
-# exist on the target machine. Each of those subprocess launches must skip
-# Qt/GUI import overhead entirely and go straight to esptool, or parallel
-# flashing of several devices would be needlessly slow.
+# esptool/espsecure/espefuse re-exec fast path -- checked FIRST, before any
+# PySide6/app.ui imports, and using only the stdlib. This matters for frozen
+# (PyInstaller) builds: `sys.executable` there is this app's own .exe, so
+# the flash engine and the security-provisioning engine launch these as
+# subprocesses (N in parallel for flashing, one at a time for provisioning)
+# with a hidden flag instead of shelling out to a Python interpreter that
+# doesn't exist on the target machine. Each of those subprocess launches
+# must skip Qt/GUI import overhead entirely and go straight to the target
+# tool, or parallel flashing of several devices would be needlessly slow.
 # --------------------------------------------------------------------------
 _ESPTOOL_REEXEC_FLAG = "--_run-esptool"
+_ESPSECURE_REEXEC_FLAG = "--_run-espsecure"
+_ESPEFUSE_REEXEC_FLAG = "--_run-espefuse"
 
-if _ESPTOOL_REEXEC_FLAG in sys.argv:
+if _ESPTOOL_REEXEC_FLAG in sys.argv or _ESPSECURE_REEXEC_FLAG in sys.argv or _ESPEFUSE_REEXEC_FLAG in sys.argv:
     import io
     # PyInstaller's --windowed bootloader sometimes nulls sys.stdout/stderr
     # even when the parent process (FlashProcess, see esptool_wrapper.py)
     # supplied real pipe handles via subprocess.Popen(stdout=PIPE). Rebind
-    # them to the raw OS file descriptors so esptool's progress output is
-    # never silently swallowed.
+    # them to the raw OS file descriptors so progress/output is never
+    # silently swallowed.
     if sys.stdout is None:
         sys.stdout = io.TextIOWrapper(io.FileIO(1, "w"), write_through=True)
     if sys.stderr is None:
         sys.stderr = io.TextIOWrapper(io.FileIO(2, "w"), write_through=True)
-    import esptool
-    sys.argv = [a for a in sys.argv if a != _ESPTOOL_REEXEC_FLAG]
-    sys.exit(esptool.main(sys.argv[1:]))
+
+    if _ESPTOOL_REEXEC_FLAG in sys.argv:
+        import esptool
+        sys.argv = [a for a in sys.argv if a != _ESPTOOL_REEXEC_FLAG]
+        sys.exit(esptool.main(sys.argv[1:]))
+    elif _ESPSECURE_REEXEC_FLAG in sys.argv:
+        import espsecure
+        sys.argv = [a for a in sys.argv if a != _ESPSECURE_REEXEC_FLAG]
+        sys.exit(espsecure.main(sys.argv[1:]))
+    else:
+        import espefuse
+        sys.argv = [a for a in sys.argv if a != _ESPEFUSE_REEXEC_FLAG]
+        sys.exit(espefuse.main(sys.argv[1:]))
 
 from PySide6.QtCore import QEvent, QLockFile
 from PySide6.QtGui import QIcon
@@ -45,12 +58,27 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.logging_setup.logger import configure_logging, get_logger
 from app.ui.main_window import MainWindow
-from app.utilities.constants import APP_NAME, ESPTOOL_REEXEC_FLAG, ORG_NAME, PROJECT_FILE_EXTENSION
+from app.utilities.constants import (
+    APP_NAME,
+    ESPEFUSE_REEXEC_FLAG,
+    ESPSECURE_REEXEC_FLAG,
+    ESPTOOL_REEXEC_FLAG,
+    ORG_NAME,
+    PROJECT_FILE_EXTENSION,
+)
 from app.utilities.helpers import get_app_data_dir, resource_path
 
 assert ESPTOOL_REEXEC_FLAG == _ESPTOOL_REEXEC_FLAG, (
     "app.utilities.constants.ESPTOOL_REEXEC_FLAG must match main.py's fast-path "
     "flag string, or the flash engine and this entry point will disagree."
+)
+assert ESPSECURE_REEXEC_FLAG == _ESPSECURE_REEXEC_FLAG, (
+    "app.utilities.constants.ESPSECURE_REEXEC_FLAG must match main.py's fast-path "
+    "flag string, or the security engine and this entry point will disagree."
+)
+assert ESPEFUSE_REEXEC_FLAG == _ESPEFUSE_REEXEC_FLAG, (
+    "app.utilities.constants.ESPEFUSE_REEXEC_FLAG must match main.py's fast-path "
+    "flag string, or the security engine and this entry point will disagree."
 )
 
 logger = get_logger(__name__)

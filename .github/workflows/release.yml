@@ -73,6 +73,8 @@ jobs:
           --icon resources/icons/app_icon.ico
           --add-data "resources;resources"
           --collect-all esptool
+          --collect-all espsecure
+          --collect-all espefuse
           run.py
 
       - name: Build with PyInstaller (macOS)
@@ -82,6 +84,8 @@ jobs:
           --name ESP32MultiFlashManager
           --add-data "resources:resources"
           --collect-all esptool
+          --collect-all espsecure
+          --collect-all espefuse
           run.py
 
       - name: Build with PyInstaller (Linux)
@@ -91,6 +95,8 @@ jobs:
           --name ESP32MultiFlashManager
           --add-data "resources:resources"
           --collect-all esptool
+          --collect-all espsecure
+          --collect-all espefuse
           run.py
 
       - name: Zip macOS .app

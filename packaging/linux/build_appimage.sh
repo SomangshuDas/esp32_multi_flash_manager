@@ -28,6 +28,8 @@ pyinstaller --noconfirm --onefile \
     --name ESP32MultiFlashManager \
     --add-data "resources:resources" \
     --collect-all esptool \
+    --collect-all espsecure \
+    --collect-all espefuse \
     run.py
 
 BIN_PATH="dist/ESP32MultiFlashManager"

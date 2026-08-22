@@ -68,6 +68,13 @@ This document is for engineers extending or maintaining the codebase.
 | `app/utilities/update_checker.py` | GitHub Releases polling + portable-vs-installer asset selection (`is_portable_build()`) |
 | `app/utilities/shortcuts.py` | User-customisable keyboard shortcuts: defaults + `AppSettings` overrides + duplicate detection |
 | `app/firmware_manager/bin_merge.py` | Merge Bins: pre-merge validation (`validate_merge_entries`) + running `esptool merge-bin` (`run_merge`) |
+| `app/flash_engine/security_manager.py` | `SecurityCommandBuilder` (`DeviceConfig` → `espsecure`/`espefuse` argv) + offline key-gen/signing runners + `validate_security_settings()` + `parse_security_state_from_output()` |
+| `app/workers/security_worker.py` | `ProvisionWorker`: `QThread` that generates any requested keys then burns the requested eFuses for one device |
+| `app/workers/read_worker.py` | `ReadWorker`: `QThread` for the read-only Chip Info / Flash ID / eFuse Summary / Security Info / Read Flash Region operations |
+| `app/ui/security_settings_widget.py` | `SecuritySettingsWidget`: the Security tab — per-device flash encryption/secure boot fields, commit-on-change, opens `ProvisionDialog` |
+| `app/ui/provision_dialog.py` | `ProvisionDialog`: validation → `ProvisionConfirmDialog` → runs `ProvisionWorker` with a live log |
+| `app/ui/provision_confirm_dialog.py` | `ProvisionConfirmDialog`: checkbox + typed-phrase confirmation gate shown before any eFuse burn |
+| `app/ui/read_device_dialog.py` | `ReadDeviceDialog`: the Read Flash / eFuse / Chip Info panel, opened from Tools menu or the device table's context menu |
 | `app/ui/merge_bin_dialog.py` | `MergeBinDialog`: pick source firmware, validate, merge, choose the post-merge Firmware Settings action |
 | `app/ui/lock_overlay.py` | `LockOverlay`: the full-window "Interface Locked" widget used by Tools → Lock Interface → Full Lock |
 | `app/ui/serial_monitor.py` | `SerialMonitorWidget` + background `_SerialReaderThread`: standalone, multi-port live serial console |
@@ -390,6 +397,104 @@ esptool's own `merge_bin()` docs — so it's always flashed starting at
 chosen post-merge action to the device's firmware list itself (add /
 de-select / remove), so `bin_merge.py` and `MergeBinDialog` never mutate
 `DeviceConfig` directly.
+
+## 15. Flash Encryption / Secure Boot provisioning & Read Flash/eFuse/Chip Info
+
+Both features are deliberately thin layers over the official `espsecure`
+and `espefuse` command-line tools (both distributed inside the same
+`esptool` PyPI package, as separate top-level importable packages —
+`import espsecure` / `import espefuse`, not `esptool.espsecure`). Neither
+this app nor these two modules implement any cryptographic primitive,
+key-derivation, or eFuse wire-protocol logic; they only build argv lists
+and run them, exactly the same pattern `FlashCommandBuilder`/`bin_merge.py`
+already use for `esptool` itself. See `security_manager.py`'s module
+docstring for the exact command each builder method maps to (this mapping
+was verified against the actual installed `esptool==5.3.1` CLI's `--help`
+output, not assumed from memory or older esptool releases — command names
+changed to hyphenated Click-style verbs in esptool 5.x).
+
+**Model:** `SecurityConfig` (on `DeviceConfig.security`) holds one
+device's flash-encryption/secure-boot settings and is persisted in
+`.efmproj` like every other `DeviceConfig` field.
+`DeviceRuntimeState.flash_encryption_detected` /
+`.secure_boot_detected` are transient, *not* persisted, `bool | None`
+fields — `None` means "unknown / never read", populated only by an
+explicit Security Info or eFuse Summary read (see below), and consumed by
+`validator.py`'s pre-upload check for the "flashing plaintext firmware to
+an already-encrypted device" foot-gun.
+
+**Chip-family branching:** `is_legacy_efuse_chip(chip_type)` is the one
+place that decides between espefuse's two eFuse-block addressing schemes
+— the original ESP32's fixed block names (`flash_encryption`,
+`secure_boot_v1`, `secure_boot_v2`) versus every other supported chip's
+unified `BLOCK_KEYn` + explicit key-purpose scheme. `LEGACY_EFUSE_CHIPS`
+in `constants.py` is intentionally a small hardcoded set (currently just
+`{"esp32"}`) rather than something derived dynamically the way
+`SUPPORTED_CHIPS` is — this split is drawn by `espefuse` itself, not by
+esptool's per-chip target list, and has been stable across every 5.x
+release.
+
+**Provisioning flow (irreversible — burns real eFuses):**
+`SecuritySettingsWidget` (the Security tab) edits `SecurityConfig` with
+the same commit-on-change pattern as `DeviceSettingsWidget`, and its
+**Provision Device (Burn eFuses)...** button opens `ProvisionDialog`,
+which:
+
+1. Runs `validate_security_settings()` and blocks on any error.
+2. Shows `ProvisionConfirmDialog` — a checkbox **and** a typed
+   confirmation phrase (`PROVISION_CONFIRM_PHRASE`, currently
+   `"BURN EFUSES"`) are both required before this returns `True`. This is
+   the actual UI-level confirmation the feature spec requires; only after
+   it's accepted does the app pass `--do-not-confirm` to `espefuse` (that
+   flag exists only to skip espefuse's own interactive terminal prompt,
+   which would otherwise hang forever against this app's piped
+   subprocess — it is not a substitute for this dialog).
+3. Starts `ProvisionWorker` (`QThread`), which generates any requested
+   keys offline (`generate_flash_encryption_key`/`generate_signing_key`,
+   synchronous `subprocess.run()` since these finish in well under a
+   second — same rationale as `bin_merge.run_merge()`), then burns each
+   requested eFuse block by running `SecurityCommandBuilder`'s burn-*
+   commands through `FlashProcess`, the same subprocess-streaming class
+   `FlashWorker` uses for actual flashing.
+
+**Read Flash / eFuse / Chip Info:** `ReadWorker` (`QThread`) plus
+`ReadDeviceDialog` implement a read-only inspection panel independent of
+the upload workflow — opened from Tools → Read Flash / eFuse / Chip
+Info... (prompts for a device if more than one exists) or a single-row
+context-menu entry on `DeviceTable`/`device_panel.py`
+(`read_device_requested` signal). Five operations, each mapping straight
+to one esptool/espefuse read-only command (`build_read_command()` in
+`read_worker.py` is the single place mapping `READ_MODE_*` → command, kept
+as a free function so the dialog can be unit-tested without spinning up a
+thread): Chip Info (`chip-id`), Flash ID (`flash-id`), eFuse Summary
+(`espefuse summary`), Security Info (`get-security-info`), and Read Flash
+Region (`read-flash <addr> <size> <out>`). Output-file handling (Settings-
+backed default folder, remembering the last-used folder,
+`SETTINGS_KEY_READ_DEFAULT_LOCATION`) intentionally mirrors Merge Bins'
+output-path field rather than introducing a new pattern.
+
+A successful Security Info or eFuse Summary read is fed through
+`parse_security_state_from_output()` — a best-effort, defensively-written
+text scan (never a hard parse) that updates
+`DeviceRuntimeState.flash_encryption_detected`/`.secure_boot_detected`
+when it can confidently tell, and leaves them alone (not "False") when it
+can't. This is what makes the "device already shows flash encryption
+enabled" pre-upload/pre-provision warning possible without this app
+implementing any eFuse-layout parsing of its own — read `espefuse`'s own
+output.
+
+**Frozen-build (PyInstaller) support:** `espsecure`/`espefuse` need the
+exact same re-exec trick `esptool` already uses (see §9 /
+`app/main.py`'s `_ESPTOOL_REEXEC_FLAG` handling) since `sys.executable` in
+a frozen build is this app's own binary, not a real Python interpreter.
+`ESPSECURE_REEXEC_FLAG`/`ESPEFUSE_REEXEC_FLAG` in `constants.py`,
+`espsecure_command_prefix()`/`espefuse_command_prefix()` in
+`esptool_wrapper.py`, and matching interception blocks in `main.py` mirror
+the esptool ones exactly. Packaging (`packaging/*/`,
+`.github/workflows/build.yml`, `.github/workflows/release.yml`) all pass
+`--collect-all espsecure --collect-all espefuse` alongside the existing
+`--collect-all esptool` — collecting `esptool` alone does **not** bundle
+these, since they're separate top-level packages, not submodules.
 
 ---
 
