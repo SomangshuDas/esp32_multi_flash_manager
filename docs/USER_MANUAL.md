@@ -26,6 +26,12 @@ manual `File → Open Project` step needed.
 
 ![The app on first launch, with no devices added yet](images/main-window.png)
 
+The **Help** menu gives quick access to this manual and the About dialog:
+
+![Help menu open](images/help-menu.png)
+
+![About dialog](images/about-dialog.png)
+
 ## 2. The main window
 
 - **Top bar (Dashboard):** live counts of Total, Connected, Disconnected,
@@ -74,6 +80,12 @@ Renaming a device and setting its port/chip type on the **Device
 Settings** tab:
 
 ![Device Settings tab showing a renamed device](images/device-settings-rename.png)
+
+![Device Settings tab with a device selected](images/device-settings-tab.png)
+
+Right-click a device in the list for quick actions:
+
+![Device context menu](images/device-context-menu.png)
 
 ## 4. Adding firmware
 
@@ -139,6 +151,8 @@ flashable `.bin`, using `esptool`'s own `merge-bin` command:
 
 ## 5. Flash Encryption & Secure Boot (Security tab)
 
+![Security tab with Flash Encryption and Secure Boot options](images/security-tab.png)
+
 The **Security** tab (next to Firmware and Device Settings) provisions a
 device's flash encryption and/or secure boot, built entirely on the same
 `espsecure`/`espefuse` tools Espressif's own Flash Download Tool uses —
@@ -184,6 +198,8 @@ verbatim to the `espefuse` command line, for options this tab doesn't
 expose a dedicated control for.
 
 ## 6. Read Flash / eFuse / Chip Info
+
+![Read Flash dialog validation when no port is selected](images/read-no-port-validation.png)
 
 Available any time from **Tools → Read Flash / eFuse / Chip Info...** (asks
 which device if more than one is configured) or by right-clicking a single
@@ -305,6 +321,8 @@ window you can:
 
 ## 10. Batch editing
 
+![Batch edit dialog](images/batch-edit-dialog.png)
+
 **Devices → Batch Edit...** (`Ctrl+B`) lets you change one setting (e.g.
 baud rate, flash mode, or any of the boolean flags) across **All
 devices** or just the **currently selected** ones, in one action — handy
@@ -361,6 +379,8 @@ port, chip type, or current status — the list narrows as you type.
 
 ## 14. Flash history
 
+![Flash history dock](images/flash-history-dock.png)
+
 The **Flash History** dock (bottom of the window, toggle via **View**
 menu) accumulates every attempt across the session: date, time, device
 name, port, firmware summary, duration, and result. Click **Export
@@ -368,6 +388,8 @@ CSV...** to save it for QA/traceability records, or **Clear History** to
 reset it.
 
 ## 15. Settings
+
+![Settings dialog](images/settings-dialog.png)
 
 **Tools → Settings...** lets you set:
 - **Theme** — **System Default** (follows your OS's light/dark setting,
@@ -383,6 +405,8 @@ A one-click **Open Logs Folder** button is also here if you need to send
 logs to support.
 
 ## 16. Serial Monitor
+
+![Serial monitor port picker dialog](images/serial-monitor-port-dialog.png)
 
 **Tools → Open Serial Monitor...** (or right-click a device row →
 **Open Serial Monitor**) opens a live, two-way view of a board's serial
@@ -403,6 +427,8 @@ Two safeguards keep it from colliding with flashing:
 
 ## 17. Assign Firmware Set to Devices
 
+![Assign firmware set dialog](images/assign-firmware-set-dialog.png)
+
 **Devices → Assign Firmware Set to Devices...** is built for the "one
 firmware set, many identical devices" workflow common on a
 manufacturing bench. It imports one firmware folder with the same
@@ -415,6 +441,8 @@ firmware per-device: auto-detect, the pre-upload warning page, live
 per-device progress, history, everything.
 
 ## 18. Locking the interface
+
+![Lock Interface submenu](images/lock-interface-submenu.png)
 
 There are two lock modes, both under **Tools → Lock Interface**, and both
 protected by the same unlock key.
@@ -454,6 +482,8 @@ skipped with a warning rather than having its settings rewritten out from
 under a running upload. Saving your project is never restricted.
 
 ## 19. Keyboard shortcuts
+
+![Keyboard shortcuts dialog](images/keyboard-shortcuts-dialog.png)
 
 **Tools → Keyboard Shortcuts...** lets you remap any action below to a
 key sequence of your choice; the app warns you (and blocks Save) if two

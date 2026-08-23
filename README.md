@@ -179,6 +179,63 @@ file via **File → Save Project As...**:
 
 ![Save Project As dialog](docs/images/save-project-dialog.png)
 
+Per-device settings on the **Device Settings** tab — port, chip type,
+baud rate, flash mode, and per-device flash options:
+
+![Device Settings tab with a device selected](docs/images/device-settings-tab.png)
+
+The **Security** tab, where flash encryption and secure boot are
+configured per device before anything is ever burned:
+
+![Security tab with Flash Encryption and Secure Boot options](docs/images/security-tab.png)
+
+Right-click a device for quick actions, including **Read Flash / eFuse /
+Chip Info...**:
+
+![Device context menu](docs/images/device-context-menu.png)
+
+The app always validates before it acts — for example, refusing to read
+a device with no port selected instead of guessing:
+
+![Read Flash dialog validation when no port is selected](docs/images/read-no-port-validation.png)
+
+Batch-editing settings across multiple selected devices at once:
+
+![Batch edit dialog](docs/images/batch-edit-dialog.png)
+
+Assigning a saved firmware set to one or more devices in a single step:
+
+![Assign firmware set dialog](docs/images/assign-firmware-set-dialog.png)
+
+The **Flash History** dock, keeping a record of past uploads:
+
+![Flash history dock](docs/images/flash-history-dock.png)
+
+Picking a port for the built-in **Serial Monitor**:
+
+![Serial monitor port picker dialog](docs/images/serial-monitor-port-dialog.png)
+
+The **Lock Interface** submenu, which prevents accidental edits to
+devices, firmware, or settings while uploads are in progress:
+
+![Lock Interface submenu](docs/images/lock-interface-submenu.png)
+
+App-wide preferences in **Settings**:
+
+![Settings dialog](docs/images/settings-dialog.png)
+
+Keyboard shortcuts reference (`Help → Keyboard Shortcuts`):
+
+![Keyboard shortcuts dialog](docs/images/keyboard-shortcuts-dialog.png)
+
+The **Help** menu, with quick access to the User Manual and About:
+
+![Help menu open](docs/images/help-menu.png)
+
+The **About** dialog:
+
+![About dialog](docs/images/about-dialog.png)
+
 See `docs/USER_MANUAL.md` for a complete walkthrough of every screen.
 
 ---

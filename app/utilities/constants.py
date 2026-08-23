@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.9.1"
+APP_VERSION = "0.9.2"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
