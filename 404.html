@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Page not found — ESP32 Multi Flash Manager</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="assets/mark.svg">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+<script>
+  (function () {
+    var saved = localStorage.getItem("efm-theme");
+    if (saved === "light" || saved === "dark") {
+      document.documentElement.setAttribute("data-theme", saved);
+    }
+  })();
+</script>
+<style>
+  .notfound {
+    min-height: 70vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 60px 24px;
+  }
+  .notfound .code {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    letter-spacing: 0.14em;
+    color: var(--amber);
+    margin-bottom: 18px;
+  }
+  .notfound h1 { font-size: clamp(28px, 4vw, 40px); margin-bottom: 14px; }
+  .notfound p { color: var(--text-dim); max-width: 46ch; margin: 0 0 30px; }
+</style>
+</head>
+<body>
+  <header class="site-nav">
+    <div class="nav-inner container">
+      <a class="brand" href="index.html">
+        <img src="assets/mark.svg" width="30" height="30" alt="">
+        ESP32 Multi Flash Manager
+      </a>
+    </div>
+  </header>
+
+  <main class="notfound">
+    <span class="code">ERROR — PORT NOT FOUND</span>
+    <h1>404: nothing flashed here</h1>
+    <p>The page you're looking for doesn't exist, or the link is out of date. Head back to the project homepage to keep going.</p>
+    <a class="btn btn-primary" href="index.html">Back to homepage</a>
+  </main>
+
+  <footer>
+    <div class="container footer-bottom">
+      <span>MIT License · Somangshu Das</span>
+      <a href="https://github.com/SomangshuDas/esp32_multi_flash_manager" target="_blank" rel="noopener">GitHub →</a>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP32 Multi Flash Manager — Flash an unlimited bench of ESP32 boards, in parallel</title>
+<meta name="description" content="A production-grade, cross-platform desktop app for flashing firmware onto an unlimited number of ESP32 devices in parallel, built on Espressif's own esptool. Open source, MIT licensed.">
+<meta name="keywords" content="ESP32, esptool, firmware flashing, production flashing, batch flashing, secure boot, flash encryption, PySide6, open source">
+<meta name="author" content="Somangshu Das">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://somangshudas.github.io/esp32_multi_flash_manager/">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0a0c0f" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f6f8" media="(prefers-color-scheme: light)">
+
+<link rel="icon" type="image/svg+xml" href="assets/mark.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="site.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+
+<!-- Open Graph -->
+<meta property="og:title" content="ESP32 Multi Flash Manager">
+<meta property="og:description" content="Flash an unlimited bench of ESP32 boards in parallel. Cross-platform, open source, built on esptool.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://somangshudas.github.io/esp32_multi_flash_manager/">
+<meta property="og:site_name" content="ESP32 Multi Flash Manager">
+<meta property="og:image" content="https://somangshudas.github.io/esp32_multi_flash_manager/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="ESP32 Multi Flash Manager — flash an unlimited bench of ESP32 boards in parallel">
+
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="ESP32 Multi Flash Manager">
+<meta name="twitter:description" content="Flash an unlimited bench of ESP32 boards in parallel. Cross-platform, open source, built on esptool.">
+<meta name="twitter:image" content="https://somangshudas.github.io/esp32_multi_flash_manager/assets/og-image.png">
+
+<!-- Structured data for search engines -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "ESP32 Multi Flash Manager",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Windows, macOS, Linux",
+  "description": "A production-grade, cross-platform desktop application for flashing firmware onto an unlimited number of ESP32 devices in parallel, built on Espressif's official esptool.",
+  "url": "https://somangshudas.github.io/esp32_multi_flash_manager/",
+  "downloadUrl": "https://github.com/SomangshuDas/esp32_multi_flash_manager/releases",
+  "codeRepository": "https://github.com/SomangshuDas/esp32_multi_flash_manager",
+  "license": "https://github.com/SomangshuDas/esp32_multi_flash_manager/blob/main/LICENSE",
+  "author": {
+    "@type": "Person",
+    "name": "Somangshu Das",
+    "url": "https://github.com/SomangshuDas"
+  },
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}
+</script>
+
+<script>
+  // Applied synchronously, before CSS paints, to avoid a flash of the
+  // wrong theme. Falls back to the OS preference (handled in CSS) when
+  // the visitor hasn't chosen Light or Dark explicitly.
+  (function () {
+    var saved = localStorage.getItem("efm-theme");
+    if (saved === "light" || saved === "dark") {
+      document.documentElement.setAttribute("data-theme", saved);
+    }
+  })();
+</script>
+</head>
+<body>
+
+<header class="site-nav">
+  <div class="nav-inner container">
+    <a class="brand" href="#top">
+      <img src="assets/mark.svg" width="30" height="30" alt="">
+      ESP32 Multi Flash Manager
+    </a>
+    <nav class="links">
+      <a href="#features">Features</a>
+      <a href="#compare">Compare</a>
+      <a href="#quick-start">Quick Start</a>
+      <a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/tree/main/docs">Docs</a>
+      <a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/releases">Releases</a>
+    </nav>
+    <div class="nav-cta">
+      <div class="theme-switch" role="group" aria-label="Theme" id="themeSwitch">
+        <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+        <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
+      <a class="btn btn-ghost" href="https://github.com/SomangshuDas/esp32_multi_flash_manager" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.08.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+        GitHub
+      </a>
+      <a class="btn btn-primary" href="#quick-start">Get Started</a>
+    </div>
+    <button class="nav-toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M2 4.5h14M2 9h14M2 13.5h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+  <div class="mobile-drawer" id="mobileDrawer">
+    <a href="#features">Features</a>
+    <a href="#how-it-works">How It Works</a>
+    <a href="#compare">Compare</a>
+    <a href="#quick-start">Quick Start</a>
+    <a href="#faq">FAQ</a>
+    <a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/tree/main/docs">Docs</a>
+    <a href="https://github.com/SomangshuDas/esp32_multi_flash_manager" target="_blank" rel="noopener">GitHub</a>
+    <div class="theme-switch" role="group" aria-label="Theme" id="themeSwitchMobile">
+      <button type="button" data-theme-choice="system" aria-pressed="true">System</button>
+      <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+      <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="container hero-inner">
+      <div>
+        <span class="eyebrow">Open Source · MIT License · Windows / macOS / Linux</span>
+        <h1>Flash an unlimited bench of ESP32 boards.<br>In parallel.<span class="accent"> Without losing your mind.</span></h1>
+        <p class="lead">
+          A production-grade, cross-platform desktop app for flashing firmware onto
+          any number of ESP32 devices at once — built on Espressif's own
+          <code>esptool</code> for correctness, and designed for the manufacturing
+          floor, not just a single dev bench.
+        </p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="#quick-start">
+            Get Started
+            <svg viewBox="0 0 16 16" fill="none"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/SomangshuDas/esp32_multi_flash_manager" target="_blank" rel="noopener">View on GitHub</a>
+          <a class="btn btn-ghost" href="https://github.com/SomangshuDas/esp32_multi_flash_manager/releases" target="_blank" rel="noopener">Download a Release</a>
+        </div>
+        <div class="stat-row">
+          <div class="stat"><span class="num">∞</span><span class="label">devices per bench</span></div>
+          <div class="stat"><span class="num">1:1</span><span class="label">thread &amp; process per device</span></div>
+          <div class="stat"><span class="num">3</span><span class="label">desktop platforms</span></div>
+          <div class="stat"><span class="num">0</span><span class="label">flashing protocol reimplemented</span></div>
+        </div>
+      </div>
+
+      <!-- Signature visual: Parallel Flash Console -->
+      <div class="console-panel" role="img" aria-label="Illustration of five ESP32 devices flashing in parallel, each with its own progress bar and status indicator">
+        <div class="console-head">
+          <span class="title">PARALLEL FLASH — 5 DEVICES</span>
+          <div class="dots"><span></span><span></span><span></span></div>
+        </div>
+
+        <div class="device-row">
+          <span class="dev-id">ESP32 #1<span class="port">/dev/ttyUSB0</span></span>
+          <div class="bar-track"><div class="bar-fill"></div></div>
+          <span class="status-dot">FLASH</span>
+        </div>
+        <div class="device-row">
+          <span class="dev-id">ESP32 #2<span class="port">/dev/ttyUSB1</span></span>
+          <div class="bar-track"><div class="bar-fill"></div></div>
+          <span class="status-dot">FLASH</span>
+        </div>
+        <div class="device-row">
+          <span class="dev-id">ESP32 #3<span class="port">COM5</span></span>
+          <div class="bar-track"><div class="bar-fill"></div></div>
+          <span class="status-dot">FLASH</span>
+        </div>
+        <div class="device-row">
+          <span class="dev-id">ESP32 #4<span class="port">COM6</span></span>
+          <div class="bar-track"><div class="bar-fill"></div></div>
+          <span class="status-dot">FLASH</span>
+        </div>
+        <div class="device-row">
+          <span class="dev-id">ESP32 #5<span class="port">/dev/tty.usbserial</span></span>
+          <div class="bar-track"><div class="bar-fill"></div></div>
+          <span class="status-dot">FLASH</span>
+        </div>
+
+        <div class="console-log" aria-hidden="true">
+          <ul>
+            <li>Writing at 0x00010000... (38%)</li>
+            <li>Writing at 0x00010000... (71%)</li>
+            <li class="ok">Hash of data verified. Leaving...</li>
+            <li>Writing at 0x00001000... (12%)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="divider container">
+
+  <!-- ============ FEATURES ============ -->
+  <section id="features">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="section-tag">What it does</span>
+        <h2>Everything a production bench actually needs</h2>
+        <p>Not a wrapper around one esptool call — a full workflow for configuring, validating, flashing, and auditing a bench of boards.</p>
+      </div>
+
+      <div class="feature-grid reveal">
+
+        <article class="feature-card">
+          <div class="mark"><svg viewBox="0 0 20 20" fill="none"><path d="M3 10h4M13 10h4M8 4l4 12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+          <h3>True parallel flashing</h3>
+          <p>Every device you upload to gets its own worker thread and its own <code>esptool</code> subprocess. A slow or stuck board never blocks the others, and the UI never freezes.</p>
+        </article>
+
+        <article class="feature-card">
+          <div class="mark"><svg viewBox="0 0 20 20" fill="none"><path d="M4 4h12v6H4zM4 14h5M4 17h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+          <h3>Automatic firmware detection</h3>
+          <p>Point the app at a build output folder. It recognizes <code>bootloader.bin</code>, <code>partition-table.bin</code>, <code>firmware.bin</code> and assigns standard flash addresses automatically.</p>
+        </article>
+
+        <article class="feature-card">
+          <div class="mark"><svg viewBox="0 0 20 20" fill="none"><rect x="4" y="3" width="12" height="14" rx="1.5" stroke="currentColor" stroke-width="1.6"/><path d="M7 7h6M7 10h6M7 13h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+          <h3>Project files (.efmproj)</h3>
+          <p>Save a whole bench — every device, firmware path, flash setting, and window layout — to one JSON file. Missing firmware on reopen is flagged, not a crash.</p>
+        </article>
+
+        <article class="feature-card">
+          <div class="mark"><svg viewBox="0 0 20 20" fill="none"><path d="M10 3l7 3.5v6L10 16l-7-3.5v-6L10 3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 9v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+          <h3>Pre-upload validation</h3>
+          <p>Duplicate ports, missing firmware, invalid or overlapping addresses, and bad chip selections are caught before a single byte is written — errors block the upload.</p>
+        </article>
+
+        <article class="feature-card">
+          <div class="mark"><svg viewBox="0 0 20 20" fill="none"><path d="M4 15V5M8 15V9M12 15V3M16 15v7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+          <h3>Flash history + CSV export</h3>
+          <p>Every attempt — success, failure, or cancellation — is logged with device, firmware, date, and duration, exportable for QA and traceability records.</p>
+        </article>
+
+        <article class="feature-card">
+          <div class="mark"><svg viewBox="0 0 20 20" fill="none"><rect x="4" y="8" width="12" height="9" rx="1.5" stroke="currentColor" stroke-width="1.6"/><path d="M7 8V6a3 3 0 0 1 6 0v2" stroke="currentColor" stroke-width="1.6"/></svg></div>
+          <h3>Flash Encryption &amp; Secure Boot</h3>
+          <p>Generate or import keys and burn eFuses through <code>espsecure</code>/<code>espefuse</code> — gated behind an acknowledgement box and a typed confirmation phrase.</p>
+        </article>
+
+        <article class="feature-card">
+          <div class="mark"><svg viewBox="0 0 20 20" fill="none"><path d="M4 6h5v5H4zM11 9h5v5h-5z" stroke="currentColor" stroke-width="1.6"/><path d="M9 8.5 11 10" stroke="currentColor" stroke-width="1.6"/></svg></div>
+          <h3>Merge Bins</h3>
+          <p>Combine a device's separate firmware images into one flashable <code>.bin</code> entirely offline, with pre-merge validation for missing files and overlapping regions.</p>
+        </article>
+
+        <article class="feature-card">
+          <div class="mark"><svg viewBox="0 0 20 20" fill="none"><rect x="3" y="5" width="14" height="10" rx="1.5" stroke="currentColor" stroke-width="1.6"/><path d="M3 8h14" stroke="currentColor" stroke-width="1.6"/></svg></div>
+          <h3>Built-in Serial Monitor</h3>
+          <p>Open any number of ports at once, each in its own window, with baud selection, auto-scroll, search, and save-to-file — no extra tool required.</p>
+        </article>
+
+        <article class="feature-card">
+          <div class="mark"><svg viewBox="0 0 20 20" fill="none"><rect x="5" y="9" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.6"/><path d="M7.5 9V6.5a2.5 2.5 0 0 1 5 0V9" stroke="currentColor" stroke-width="1.6"/></svg></div>
+          <h3>Interface Lock</h3>
+          <p>Hand a bench to an operator with Settings Lock (uploads stay usable, configuration doesn't) or Full Lock — both behind a SHA-256-hashed key.</p>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <section id="how-it-works" class="tight">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="section-tag">How it works</span>
+        <h2>One click, N independent flashes</h2>
+        <p>The app never talks to a chip directly — it drives Espressif's own <code>esptool</code> as a subprocess per device, which is how correctness is preserved while still scaling to any bench size.</p>
+      </div>
+
+      <div class="pipeline reveal">
+        <div class="pipeline-node">
+          <div class="node-box">
+            <h4>You click Upload</h4>
+            <p>One action, applied to every device you've configured on the bench.</p>
+          </div>
+        </div>
+
+        <div class="pipeline-arrow" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h16M14 6l6 6-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+
+        <div class="pipeline-node">
+          <div class="node-box">
+            <div class="fanout" aria-hidden="true">
+              <svg viewBox="0 0 84 46">
+                <path class="trunk" d="M6 23 H30 M30 23 L74 6 M30 23 L74 23 M30 23 L74 40"/>
+                <circle class="leaf" cx="6" cy="23" r="4"/>
+                <circle class="leaf" cx="74" cy="6" r="3.5"/>
+                <circle class="leaf" cx="74" cy="23" r="3.5"/>
+                <circle class="leaf" cx="74" cy="40" r="3.5"/>
+              </svg>
+            </div>
+            <h4>N worker threads</h4>
+            <p>Each device gets its own thread and its own <code>esptool</code> subprocess — nothing is shared or serialized.</p>
+          </div>
+        </div>
+
+        <div class="pipeline-arrow" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 12h16M14 6l6 6-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+
+        <div class="pipeline-node">
+          <div class="node-box">
+            <h4>N boards, live</h4>
+            <p>Progress, logs, and result land per device in real time — a stuck board never blocks the rest of the bench.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ COMPARE ============ -->
+  <section id="compare" class="tight">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="section-tag">Why not just Espressif's tool</span>
+        <h2>Not another Flash Download Tool clone</h2>
+        <p>
+          Espressif's own Flash Download Tool is the closest official
+          equivalent, and both tools flash real hardware correctly — the
+          difference is workflow, platform reach, and how far past
+          "flash one image" each one goes.
+        </p>
+      </div>
+
+      <div class="compare-table-wrap">
+        <table class="compare">
+          <thead>
+            <tr><th>Capability</th><th>ESP32 Multi Flash Manager</th><th>Espressif Flash Download Tool</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Operating systems</th><td class="yes">Windows, macOS, Linux</td><td>Windows only</td></tr>
+            <tr><th scope="row">Source</th><td class="yes">Open source (MIT)</td><td>Closed-source freeware</td></tr>
+            <tr><th scope="row">Parallel flashing</th><td class="yes">Unlimited devices, own thread + process each</td><td>Up to 20 devices per session</td></tr>
+            <tr><th scope="row">Per-device settings</th><td class="yes">Independent, editable anytime</td><td>One shared config per session</td></tr>
+            <tr><th scope="row">Firmware auto-detection</th><td class="yes">Yes, standard addresses assigned</td><td>Manual entry per slot</td></tr>
+            <tr><th scope="row">Saved bench configuration</th><td class="yes"><code>.efmproj</code> project files</td><td>No project file format</td></tr>
+            <tr><th scope="row">Flash / read history</th><td class="yes">Persistent, CSV export</td><td>No persistent run history</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="compare-foot">
+        This is a condensed view — the full capability-by-capability
+        breakdown, including Secure Boot, eFuse read-back, and access
+        control, is in the
+        <a href="https://github.com/SomangshuDas/esp32_multi_flash_manager#esp32-multi-flash-manager-vs-espressif-flash-download-tool" target="_blank" rel="noopener">project README</a>.
+      </p>
+    </div>
+  </section>
+
+  <hr class="divider container">
+
+  <!-- ============ QUICK START ============ -->
+  <section id="quick-start">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="section-tag">Get running</span>
+        <h2>From clone to your first flash in four steps</h2>
+        <p>Runs identically on Windows, macOS, and Linux — there's no platform-specific setup step.</p>
+      </div>
+
+      <div class="quickstart-grid">
+        <ol class="step-list">
+          <li>
+            <div>
+              <h4>Clone the repository</h4>
+              <p>Get the source and step into the project directory.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h4>Create a virtual environment</h4>
+              <p>Keeps dependencies isolated from the rest of your system.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h4>Install dependencies</h4>
+              <p><code>pip install -r requirements.txt</code> pulls in PySide6 and esptool.</p>
+            </div>
+          </li>
+          <li>
+            <div>
+              <h4>Run the app</h4>
+              <p>Or grab a packaged installer/portable build from the Releases page instead.</p>
+            </div>
+          </li>
+        </ol>
+
+        <div class="terminal">
+          <div class="term-head">
+            <div class="dots"><span></span><span></span><span></span></div>
+            <span class="label">bash</span>
+            <button class="copy-btn" id="copyCmd" type="button">Copy</button>
+          </div>
+          <pre id="cmdBlock"><span class="comment"># 1. Clone this repository and set up a virtual environment</span>
+<span class="cmd">git clone</span> https://github.com/SomangshuDas/esp32_multi_flash_manager.git
+<span class="cmd">cd</span> esp32_multi_flash_manager
+<span class="cmd">python -m venv</span> .venv
+
+<span class="comment"># macOS / Linux</span>
+<span class="cmd">source</span> .venv/bin/activate
+
+<span class="comment"># Windows</span>
+<span class="cmd">.venv\Scripts\activate</span>
+
+<span class="comment"># 2. Install dependencies and run</span>
+<span class="cmd">pip install</span> <span class="flag">-r</span> requirements.txt
+<span class="cmd">python</span> run.py</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PLATFORM BAND ============ -->
+  <div class="platform-band">
+    <div class="container platform-inner">
+      <span class="chip"><span class="sw"></span>Python 3.12+</span>
+      <span class="chip"><span class="sw"></span>PySide6 (Qt)</span>
+      <span class="chip"><span class="sw"></span>esptool / espsecure / espefuse</span>
+      <span class="chip"><span class="sw"></span>Windows</span>
+      <span class="chip"><span class="sw"></span>macOS</span>
+      <span class="chip"><span class="sw"></span>Linux</span>
+      <span class="chip"><span class="sw"></span>MIT License</span>
+    </div>
+  </div>
+
+  <!-- ============ FAQ ============ -->
+  <section id="faq" class="tight">
+    <div class="container">
+      <div class="section-head reveal">
+        <span class="section-tag">Questions</span>
+        <h2>Frequently asked</h2>
+      </div>
+
+      <div class="faq-list reveal">
+        <details class="faq-item">
+          <summary>Is this affiliated with Espressif?<span class="plus" aria-hidden="true"></span></summary>
+          <div class="faq-body">No. It's an independent open-source project that drives Espressif's own <code>esptool</code>, <code>espsecure</code>, and <code>espefuse</code> as subprocesses — the flashing protocol itself is never reimplemented, so correctness comes from the same tools Espressif's own Flash Download Tool relies on.</div>
+        </details>
+        <details class="faq-item">
+          <summary>Is it free to use?<span class="plus" aria-hidden="true"></span></summary>
+          <div class="faq-body">Yes. It's MIT licensed and the source is fully available on <a href="https://github.com/SomangshuDas/esp32_multi_flash_manager" target="_blank" rel="noopener">GitHub</a>. <code>esptool</code>/<code>espsecure</code>/<code>espefuse</code> remain separate GPLv2 dependencies.</div>
+        </details>
+        <details class="faq-item">
+          <summary>How many devices can I flash at once?<span class="plus" aria-hidden="true"></span></summary>
+          <div class="faq-body">There's no hard-coded limit — every device gets its own thread and its own <code>esptool</code> subprocess. In practice the ceiling is your USB hubs and host machine, not the app.</div>
+        </details>
+        <details class="faq-item">
+          <summary>How well-tested is each platform?<span class="plus" aria-hidden="true"></span></summary>
+          <div class="faq-body">Windows 10 is tested. Linux and macOS installers are not yet tested on real hardware by the maintainer (no Apple hardware available), though the app itself runs identically on all three. If you hit an issue on Linux or macOS, reports are welcome.</div>
+        </details>
+        <details class="faq-item">
+          <summary>Where do I report a bug or request a feature?<span class="plus" aria-hidden="true"></span></summary>
+          <div class="faq-body">Open an issue on <a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/issues" target="_blank" rel="noopener">GitHub Issues</a>. See <a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">CONTRIBUTING.md</a> if you'd like to submit a fix yourself.</div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ CTA BAND ============ -->
+  <section>
+    <div class="container">
+      <div class="cta-band reveal">
+        <h2>An example project is included — open it and start clicking</h2>
+        <p><code>examples/example_project.efmproj</code> ships with dummy firmware sized like real ESP-IDF output, so you can explore the whole UI before you ever touch real hardware.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="https://github.com/SomangshuDas/esp32_multi_flash_manager" target="_blank" rel="noopener">Star on GitHub</a>
+          <a class="btn btn-ghost" href="https://github.com/SomangshuDas/esp32_multi_flash_manager/issues" target="_blank" rel="noopener">Report an Issue</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="container footer-inner">
+    <div class="footer-brand">
+      <a class="brand" href="#top">
+        <img src="assets/mark.svg" width="28" height="28" alt="">
+        ESP32 Multi Flash Manager
+      </a>
+      <p>A production-grade, cross-platform desktop app for flashing firmware onto an unlimited number of ESP32 devices in parallel.</p>
+    </div>
+    <div class="footer-cols">
+      <div class="footer-col">
+        <h5>Project</h5>
+        <ul>
+          <li><a href="https://github.com/SomangshuDas/esp32_multi_flash_manager" target="_blank" rel="noopener">Source</a></li>
+          <li><a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/releases" target="_blank" rel="noopener">Releases</a></li>
+          <li><a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/issues" target="_blank" rel="noopener">Issues</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Docs</h5>
+        <ul>
+          <li><a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/blob/main/docs/USER_MANUAL.md" target="_blank" rel="noopener">User Manual</a></li>
+          <li><a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/blob/main/docs/BUILD_INSTRUCTIONS.md" target="_blank" rel="noopener">Build Instructions</a></li>
+          <li><a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/blob/main/docs/DEVELOPER_DOCUMENTATION.md" target="_blank" rel="noopener">Developer Docs</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Community</h5>
+        <ul>
+          <li><a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener">Contributing</a></li>
+          <li><a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/blob/main/CODE_OF_CONDUCT.md" target="_blank" rel="noopener">Code of Conduct</a></li>
+          <li><a href="https://github.com/SomangshuDas/esp32_multi_flash_manager/blob/main/SECURITY.md" target="_blank" rel="noopener">Security Policy</a></li>
+          <li><a href="LICENSE">License (MIT)</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="container footer-bottom">
+    <span><a href="LICENSE">MIT License</a> · Somangshu Das</span>
+    <span>Built on esptool — no flashing protocol reimplemented</span>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+</body>
+</html>

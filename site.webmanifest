@@ -1,0 +1,15 @@
+{
+  "name": "ESP32 Multi Flash Manager",
+  "short_name": "EFM",
+  "description": "A production-grade, cross-platform desktop app for flashing firmware onto an unlimited number of ESP32 devices in parallel.",
+  "start_url": "/esp32_multi_flash_manager/",
+  "scope": "/esp32_multi_flash_manager/",
+  "display": "browser",
+  "background_color": "#0a0c0f",
+  "theme_color": "#0a0c0f",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "assets/mark.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
