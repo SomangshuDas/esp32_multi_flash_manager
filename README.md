@@ -153,6 +153,36 @@ implementation for correctness.
 
 ---
 
+## Screenshots
+
+The main window with a batch of devices configured, each with its own
+port, chip type, and status:
+
+![Main window with devices added](docs/images/devices-added.png)
+
+Renaming a device and editing its per-device settings on the
+**Device Settings** tab:
+
+![Renaming a device on the Device Settings tab](docs/images/device-settings-rename.png)
+
+Adding firmware `.bin` files to a device via **Add BIN...**:
+
+![Add BIN file picker dialog](docs/images/add-bin-dialog.png)
+
+The **Firmware** tab after bootloader/partition-table/app/firmware
+images have been added, each with its flash address, size, and MD5:
+
+![Firmware tab populated with bootloader, partition table, and app images](docs/images/firmware-tab-populated.png)
+
+Saving the current bench configuration as a reusable `.efmproj` project
+file via **File → Save Project As...**:
+
+![Save Project As dialog](docs/images/save-project-dialog.png)
+
+See `docs/USER_MANUAL.md` for a complete walkthrough of every screen.
+
+---
+
 ## ESP32 Multi Flash Manager vs. Espressif Flash Download Tool
 
 Espressif's own [Flash Download Tool](https://www.espressif.com/en/support/download/other-tools)

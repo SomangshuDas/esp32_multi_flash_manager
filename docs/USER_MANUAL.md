@@ -24,6 +24,8 @@ Linux — see §10 for more) you can also just **double-click any `.efmproj`
 file**: the app launches directly with that project already loaded, no
 manual `File → Open Project` step needed.
 
+![The app on first launch, with no devices added yet](images/main-window.png)
+
 ## 2. The main window
 
 - **Top bar (Dashboard):** live counts of Total, Connected, Disconnected,
@@ -66,6 +68,13 @@ select it and click **Duplicate** — the clone keeps every setting except
 its port (which is left blank so you don't accidentally double-flash
 the same port).
 
+![Three devices added to the device list](images/devices-added.png)
+
+Renaming a device and setting its port/chip type on the **Device
+Settings** tab:
+
+![Device Settings tab showing a renamed device](images/device-settings-rename.png)
+
 ## 4. Adding firmware
 
 On the **Firmware** tab for a device, you have four ways to add files:
@@ -88,6 +97,10 @@ flashing (useful for temporarily excluding a file without deleting it).
 
 Addresses are edited in place in the table; entering something that isn't
 valid hex (e.g. `0x10000`) is rejected with a warning.
+
+![Add BIN file picker dialog](images/add-bin-dialog.png)
+
+![Firmware tab after adding bootloader, partition table, boot_app0, and app images](images/firmware-tab-populated.png)
 
 ### Merging bins
 
@@ -317,6 +330,8 @@ when you realize halfway through setup that every board should use
 - **File → Save Project** (`Ctrl+S`) / **Save Project As...**
   (`Ctrl+Shift+S`).
 - **File → Recent Projects** lists your last 10 opened/saved projects.
+
+![Save Project As dialog](images/save-project-dialog.png)
 
 If a project references firmware files that no longer exist at their
 saved path (e.g. you moved the build folder), the project still loads —
