@@ -100,7 +100,11 @@ implementation for correctness.
   independent of the upload workflow, built on esptool's/espefuse's own
   chip-id/flash-id/get-security-info/read-flash/summary commands. Nothing
   it runs ever writes to flash or eFuse; read-back data can be saved to a
-  file the same way Merge Bins' output is.
+  file the same way Merge Bins' output is. Results land in two tabs — a
+  plain-language **Summary** (chip model/revision, MAC address, flash
+  manufacturer/size, secure boot/flash encryption state, ...) alongside
+  the complete, unmodified **Log** — so you're not stuck reading raw
+  esptool/espefuse text for the fields you actually need.
 - Dockable/resizable panels, persistent window
   layout, user-customisable keyboard shortcuts (`Tools → Keyboard
   Shortcuts...`, with duplicate-assignment detection), and right-click
@@ -146,6 +150,59 @@ implementation for correctness.
   device's status/Live Output/history instead of ever reaching a generic
   error dialog; anything truly unexpected is still caught, logged, and
   shown to the user in plain language.
+
+---
+
+## ESP32 Multi Flash Manager vs. Espressif Flash Download Tool
+
+Espressif's own [Flash Download Tool](https://www.espressif.com/en/support/download/other-tools)
+("FDT") is the closest official equivalent to this project, so it's worth
+being explicit about where the two overlap and where they differ, based
+on FDT's own [published user guide](https://docs.espressif.com/projects/esp-test-tools/en/latest/esp32/production_stage/tools/flash_download_tool.html)
+(v3.9.11, the latest documented release at the time of writing). Both
+tools can flash real ESP32 hardware correctly; the difference is mostly
+in workflow, platform reach, and how far past "flash one image" each one
+goes.
+
+| Capability | ESP32 Multi Flash Manager | Espressif Flash Download Tool |
+| --- | --- | --- |
+| **Operating systems** | Windows, macOS, Linux | Windows only (7/10) |
+| **Source / license** | Open source (MIT); esptool/espefuse/espsecure remain separate GPLv2 dependencies | Closed-source freeware; no source available |
+| **Underlying flashing implementation** | Drives the official `esptool` as a subprocess — no protocol logic reimplemented | Espressif's own standalone implementation, distinct from `esptool.py` |
+| **Parallel/batch flashing** | Unlimited devices, each with its own thread and `esptool` subprocess | `FactoryMultiDownload` mode, documented up to 20 devices per session |
+| **Per-device configuration** | Independent chip type, baud, flash mode/frequency/size, and custom arguments per device, editable anytime | One shared `SPI Flash Config` per session; `Factory` mode locks it by default to prevent accidental changes |
+| **Firmware auto-detection** | Recognizes `bootloader.bin`, `partition-table.bin`, `firmware.bin`, etc. and assigns standard addresses automatically | None — each path and address is entered manually per slot |
+| **Saved project / bench configuration** | `.efmproj` JSON project files (devices, firmware, settings, layout); reopening with missing files flags them for relinking | No project file format; `Factory` mode persists via the tool's own `bin/` folder layout and `.conf` files |
+| **Combining firmware images** | Dedicated Merge Bins dialog with pre-merge validation (missing files, invalid/duplicate/overlapping addresses) before `esptool merge-bin` runs | `CombineBin` button concatenates selected files; no address-overlap validation reported to the user |
+| **Read-back (chip/flash/eFuse)** | Chip Info, Flash ID, eFuse Summary, Security Info, and Read Flash Region, each with both a friendly **Summary** view and the complete raw **Log** | `chipInfoDump` tab covering Chip Info, Read Flash, and Read Efuse, added in tool version 3.9.8; output is raw text or a fixed-name file |
+| **Flash Encryption / Secure Boot** | Per-device **Security** tab; keys generated/imported through `espsecure`; burning is blocked behind an explicit acknowledgement + typed confirmation phrase | Configured by hand-editing `security.conf` INI files per chip; supports Secure Boot v1/v2 and customer-supplied keys |
+| **History / traceability** | Persistent flash history with CSV export (device, firmware, result, duration) | `CRC32 cal` button for factory-floor file/config verification; no persistent run history |
+| **Reusable configuration** | Named Firmware Profiles, device cloning/templates, and batch editing across selected devices | None — each session's `Factory` mode config is the only reusable state |
+| **Serial monitor** | Built-in, any number of concurrent port windows | Not included |
+| **Access control** | Two lock modes (Settings Lock / Full Lock) behind a SHA-256-hashed key | `LockSettings` toggle in `Factory` mode — prevents accidental clicks, not an access-control mechanism |
+| **Update checking** | Built in, aware of installed vs. portable builds | Manual — check Espressif's download page for new tool versions |
+| **Theming** | System-aware light/dark, switchable live | Follows Windows' native look only |
+
+### Which one should you choose?
+
+- **Choose Espressif's Flash Download Tool** if you're on Windows only,
+  need Espressif's own officially-supported binary for a factory line
+  that's already standardized on it, or want `Factory` mode's
+  locked-down, config-file-driven workflow for a non-technical operator
+  who should never see a settings screen at all.
+- **Choose ESP32 Multi Flash Manager** if you need macOS or Linux
+  support, more than 20 devices at once, per-device (rather than
+  per-session) settings, a saveable/reopenable project file, firmware
+  auto-detection, flash/read history you can export, or you'd simply
+  rather work with an open-source tool you can audit or extend yourself.
+
+Both are safe choices for real production use — they lean on the same
+underlying Espressif flashing protocol knowledge, just through different
+implementations and with different target workflows. For a small bench
+of Windows-only boards with a fixed, rarely-changing firmware set,
+Espressif's tool is perfectly sufficient; for anything larger, more
+cross-platform, or more automation-and-traceability-driven, this project
+is the closer fit.
 
 ---
 
@@ -272,6 +329,19 @@ tag additionally triggers
 builds the installers under `packaging/` for all three OSes and attaches
 them to the GitHub Release. See `docs/BUILD_INSTRUCTIONS.md` §5 for
 details.
+
+## Contributing
+
+Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for
+the development setup, this codebase's conventions (strict MVC,
+out-of-process `esptool`/`espefuse`/`espsecure`, irreversibility
+safeguards, etc.), and how to submit a pull request. Please also read the
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) before participating.
+
+Found a security issue rather than a regular bug — especially anything
+touching flash-encryption/secure-boot key handling or eFuse-burning
+confirmations? Please follow [`SECURITY.md`](SECURITY.md) instead of
+opening a public issue.
 
 ## License
 

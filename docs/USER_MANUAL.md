@@ -195,9 +195,20 @@ Pick an **Operation** from the dropdown and click **Run**:
   the **Address** and **Size** (hex like `0x0`/`0x1000`, or decimal) and a
   **Save To File** path.
 
-Output streams live into the dialog, the same way Live Output does during
-an Upload. Use **Save Output As Text...** to save whatever's currently on
-screen, or (for eFuse Summary / Read Flash Region) the dedicated **Save To
+Results appear in two tabs:
+
+- **Summary** — a plain-language rendering of the handful of fields
+  people actually look for (chip model and revision, MAC address, flash
+  manufacturer/size, secure boot/flash encryption state, the eFuse fields
+  above, or the address/size/duration for a Read Flash Region), parsed
+  from the same output shown in Log. If a particular field can't be
+  confidently recognized it's simply left out rather than guessed at; if
+  nothing at all could be parsed, this tab says so and points you at Log.
+- **Log** — the complete, unmodified `esptool`/`espefuse` output, streamed
+  live into the dialog the same way Live Output does during an Upload.
+
+Use **Save Output As Text...** to save whatever's currently in the Log
+tab, or (for eFuse Summary / Read Flash Region) the dedicated **Save To
 File** field to have the read-back data written straight to disk by
 esptool/espefuse itself. The default save folder follows the same
 "remembers the last folder you used" behavior as Merge Bins' output field.

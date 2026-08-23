@@ -12,10 +12,23 @@ Output can be saved to a file, following the same pattern as Merge Bins'
 output handling (app/ui/merge_bin_dialog.py): a Settings-backed default
 folder (SETTINGS_KEY_READ_DEFAULT_LOCATION) the user can override per-read
 via Browse..., falling back to the user's home folder the first time.
+
+Results are shown in two tabs: **Log** is the complete, unmodified
+esptool/espefuse output (identical to every prior release of this
+dialog), and **Summary** is a best-effort, human-friendly key/value
+rendering of that same output produced by
+app/utilities/read_output_parser.py -- e.g. "Chip Model: ESP32-D0WDQ6"
+instead of scrolling through raw chip-id/flash-id/summary/
+get-security-info text. The Summary tab never replaces the Log tab and
+never blocks on a field it can't confidently parse -- it simply omits
+that field and, if nothing at all was recognized, says so and points back
+at Log.
 """
 
 from __future__ import annotations
 
+import time
+from html import escape
 from pathlib import Path
 
 from PySide6.QtGui import QTextCursor
@@ -31,6 +44,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -51,10 +66,21 @@ from app.utilities.constants import (
     SETTINGS_KEY_READ_DEFAULT_LOCATION,
 )
 from app.utilities.helpers import safe_filename, timestamp_now
+from app.utilities.read_output_parser import parse_read_output
 from app.workers.read_worker import ReadWorker
 
 _MODES_NEEDING_OUTPUT_FILE = {READ_MODE_READ_FLASH}
 _MODES_ALLOWING_OUTPUT_FILE = {READ_MODE_READ_FLASH, READ_MODE_EFUSE_SUMMARY}
+
+_SUMMARY_PLACEHOLDER = (
+    "Run an operation above to see a friendly, plain-language summary here.\n"
+    "The Log tab always shows the complete, unmodified esptool/espefuse output."
+)
+_SUMMARY_NO_FIELDS_RECOGNIZED = (
+    "Ran successfully, but no fields could be confidently parsed out of this "
+    "output for a friendly summary. See the Log tab for the complete, "
+    "unmodified result."
+)
 
 
 class ReadDeviceDialog(QDialog):
@@ -109,7 +135,17 @@ class ReadDeviceDialog(QDialog):
         self.output_view.setReadOnly(True)
         self.output_view.setStyleSheet("font-family: Consolas, 'Courier New', monospace; font-size: 12px;")
         self.output_view.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        layout.addWidget(self.output_view, 1)
+
+        self.summary_view = QTextEdit()
+        self.summary_view.setReadOnly(True)
+        self.summary_view.setPlainText(_SUMMARY_PLACEHOLDER)
+
+        self.result_tabs = QTabWidget()
+        self.result_tabs.addTab(self.summary_view, "Summary")
+        self.result_tabs.addTab(self.output_view, "Log")
+        layout.addWidget(self.result_tabs, 1)
+
+        self._run_started_at: float = 0.0
 
         action_row = QHBoxLayout()
         self.run_button = QPushButton("Run")
@@ -147,6 +183,7 @@ class ReadDeviceDialog(QDialog):
         self.output_row_widget.setVisible(allow_output)
         if allow_output and not self.output_edit.text().strip():
             self.output_edit.setText(self._default_output_path(mode))
+        self.summary_view.setPlainText(_SUMMARY_PLACEHOLDER)
 
     def _browse_output(self) -> None:
         mode = self.mode_combo.currentData()
@@ -180,6 +217,8 @@ class ReadDeviceDialog(QDialog):
 
         self.run_button.setEnabled(False)
         self.output_view.clear()
+        self.summary_view.setPlainText("Running...")
+        self._run_started_at = time.monotonic()
 
         self._worker = ReadWorker(
             self._device, mode,
@@ -199,6 +238,7 @@ class ReadDeviceDialog(QDialog):
 
     def _on_finished(self, success: bool, message: str, output_path: str) -> None:
         self.run_button.setEnabled(True)
+        mode = self.mode_combo.currentData()
         if success:
             note = f"\n>>> {message}"
             if output_path:
@@ -206,16 +246,38 @@ class ReadDeviceDialog(QDialog):
             self.output_view.appendPlainText(note)
             if output_path:
                 self.settings.setValue(SETTINGS_KEY_READ_DEFAULT_LOCATION, str(Path(output_path).parent))
-            mode = self.mode_combo.currentData()
             if mode in (READ_MODE_SECURITY_INFO, READ_MODE_EFUSE_SUMMARY):
                 fe_state, sb_state = parse_security_state_from_output(self.output_view.toPlainText())
                 if fe_state is not None:
                     self._device.runtime.flash_encryption_detected = fe_state
                 if sb_state is not None:
                     self._device.runtime.secure_boot_detected = sb_state
+            self._render_summary(mode, output_path)
         else:
             self.output_view.appendPlainText(f"\n>>> FAILED: {message}")
+            self.summary_view.setPlainText(f"FAILED: {message}\n\nSee the Log tab for the complete output.")
             QMessageBox.critical(self, "Read Failed", message)
+
+    def _render_summary(self, mode: str, output_path: str) -> None:
+        duration = time.monotonic() - self._run_started_at if self._run_started_at else None
+        rows = parse_read_output(
+            mode,
+            self.output_view.toPlainText(),
+            address=self.address_edit.text().strip(),
+            size=self.size_edit.text().strip(),
+            output_path=output_path,
+            duration_seconds=duration,
+        )
+        if not rows:
+            self.summary_view.setPlainText(_SUMMARY_NO_FIELDS_RECOGNIZED)
+            return
+
+        html_rows = "".join(
+            f"<tr><td style='padding:2px 12px 2px 0; color:#888;'>{escape(label)}</td>"
+            f"<td style='padding:2px 0;'><b>{escape(value)}</b></td></tr>"
+            for label, value in rows
+        )
+        self.summary_view.setHtml(f"<table>{html_rows}</table>")
 
     def _save_log_as_text(self) -> None:
         default_name = f"{safe_filename(self._device.name)}_read_output_{timestamp_now().replace(':', '-').replace(' ', '_')}.txt"
