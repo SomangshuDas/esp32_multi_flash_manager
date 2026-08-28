@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.9.2"
+APP_VERSION = "0.10.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -401,3 +401,89 @@ READ_MODE_LABELS = {
 # on chips that place it at the conventional 0x1000 address.
 DEFAULT_READ_FLASH_ADDRESS = "0x0"
 DEFAULT_READ_FLASH_SIZE = "0x1000"
+
+# --------------------------------------------------------------------------
+# Auto-Save (app/ui/settings_dialog.py, app/ui/main_window.py)
+# --------------------------------------------------------------------------
+# Minutes between automatic saves; 0 means "Disabled". A brand-new project
+# that has never been saved to disk (no current_file_path yet) is always
+# skipped -- there is nowhere to auto-save it to yet, and silently picking
+# a location on the user's behalf would be surprising.
+AUTOSAVE_INTERVAL_DISABLED = 0
+AUTOSAVE_INTERVAL_OPTIONS = [0, 1, 2, 5, 10, 15, 30]
+AUTOSAVE_INTERVAL_LABELS = {
+    0: "Disabled",
+    1: "Every 1 minute",
+    2: "Every 2 minutes",
+    5: "Every 5 minutes",
+    10: "Every 10 minutes",
+    15: "Every 15 minutes",
+    30: "Every 30 minutes",
+}
+DEFAULT_AUTOSAVE_INTERVAL_MINUTES = 10
+SETTINGS_KEY_AUTOSAVE_INTERVAL = "autosave_interval_minutes"
+
+# --------------------------------------------------------------------------
+# QC Verification (app/models/history_model.py, app/ui/history_panel.py)
+# --------------------------------------------------------------------------
+# Distinct wording from the flash-result strings (STATUS_COMPLETED /
+# STATUS_FAILED above) since QC verification is a separate, manual step a
+# human performs on the physical board *after* a flash already succeeded --
+# conflating the two would make a "Failed" QC result indistinguishable from
+# a flash that never completed in the first place.
+QC_STATUS_NOT_TESTED = "Not Tested"
+QC_STATUS_PASS = "Pass"
+QC_STATUS_FAIL = "Fail"
+QC_STATUS_OPTIONS = [QC_STATUS_NOT_TESTED, QC_STATUS_PASS, QC_STATUS_FAIL]
+QC_STATUS_COLORS = {
+    QC_STATUS_NOT_TESTED: "#8a8f98",
+    QC_STATUS_PASS: "#2f9e44",
+    QC_STATUS_FAIL: "#e03131",
+}
+
+# --------------------------------------------------------------------------
+# Sounds & Notifications (app/utilities/sound_player.py, Settings -> Sounds)
+# --------------------------------------------------------------------------
+SOUND_EVENT_FLASH_SUCCESS = "flash_success"
+SOUND_EVENT_FLASH_FAILURE = "flash_failure"
+SOUND_EVENT_BATCH_COMPLETE = "batch_complete"
+SOUND_EVENT_DEVICE_CONNECTED = "device_connected"
+SOUND_EVENT_DEVICE_DISCONNECTED = "device_disconnected"
+SOUND_EVENTS = [
+    SOUND_EVENT_FLASH_SUCCESS,
+    SOUND_EVENT_FLASH_FAILURE,
+    SOUND_EVENT_BATCH_COMPLETE,
+    SOUND_EVENT_DEVICE_CONNECTED,
+    SOUND_EVENT_DEVICE_DISCONNECTED,
+]
+SOUND_EVENT_LABELS = {
+    SOUND_EVENT_FLASH_SUCCESS: "Device flash succeeded",
+    SOUND_EVENT_FLASH_FAILURE: "Device flash failed",
+    SOUND_EVENT_BATCH_COMPLETE: "Whole batch finished",
+    SOUND_EVENT_DEVICE_CONNECTED: "Device connected (USB)",
+    SOUND_EVENT_DEVICE_DISCONNECTED: "Device disconnected (USB)",
+}
+SETTINGS_KEY_SOUNDS_ENABLED = "sounds_enabled"
+DEFAULT_SOUNDS_ENABLED = True
+# Per-event settings.json keys are built as f"{prefix}{event}".
+SETTINGS_KEY_SOUND_EVENT_ENABLED_PREFIX = "sound_enabled_"
+SETTINGS_KEY_SOUND_EVENT_PATH_PREFIX = "sound_path_"
+# Events that are ON by default even before the user visits the Sounds tab.
+DEFAULT_ENABLED_SOUND_EVENTS = {SOUND_EVENT_FLASH_FAILURE, SOUND_EVENT_BATCH_COMPLETE}
+
+# --------------------------------------------------------------------------
+# Device Groups & Tags (app/models/device_model.py, app/ui/device_panel.py)
+# --------------------------------------------------------------------------
+# Free-text labels (e.g. "Line A", "RFID Batch") a device can carry any
+# number of, used purely for filtering/sorting/at-a-glance grouping in the
+# UI -- they never affect flashing behaviour itself.
+TAG_FILTER_ALL = "All Tags"
+DEVICE_SORT_ORDER_ADDED = "order_added"
+DEVICE_SORT_NAME = "name"
+DEVICE_SORT_TAG = "tag"
+DEVICE_SORT_OPTIONS = [DEVICE_SORT_ORDER_ADDED, DEVICE_SORT_NAME, DEVICE_SORT_TAG]
+DEVICE_SORT_LABELS = {
+    DEVICE_SORT_ORDER_ADDED: "Sort: Order Added",
+    DEVICE_SORT_NAME: "Sort: Name",
+    DEVICE_SORT_TAG: "Sort: Tag",
+}

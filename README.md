@@ -150,6 +150,27 @@ implementation for correctness.
   device's status/Live Output/history instead of ever reaching a generic
   error dialog; anything truly unexpected is still caught, logged, and
   shown to the user in plain language.
+- **Auto-Save.** Silently saves your project on a configurable interval
+  (Disabled, or every 1–30 minutes) once it's been saved to disk at least
+  once — a brand-new, never-saved project is never auto-saved on your
+  behalf.
+- **Dynamic MD5.** Firmware checksums are never trusted from the project
+  file — they're recalculated from the actual `.bin` on disk every time
+  a project loads, and flagged if a file changed since it was added.
+- **QC Verification.** Mark any successfully-flashed device Pass/Fail
+  after a physical bench check, stored with its history entry and
+  included in CSV exports.
+- **Device Traceability.** Every successful flash automatically captures
+  the device's MAC address (via the same parsing esptool's own connect
+  output already provides) and attaches it to that flash's history entry.
+- **Sounds & Notifications.** Configurable sounds (or a plain system beep)
+  for flash success/failure, batch completion, and device connect/
+  disconnect, with per-event enable toggles (`Settings → Sounds`).
+- **Device Groups & Tags.** Assign free-text tags (e.g. "Line A", "RFID
+  Batch") to any device, then filter and sort the device list by tag —
+  fully compatible with existing multi-selection and Assign Firmware Set.
+- **Flash History search & filtering.** Narrow the History dock by device/
+  MAC address, date range, result, or QC status, all combinable.
 
 ---
 

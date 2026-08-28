@@ -75,6 +75,9 @@ class DeviceSettingsWidget(QWidget):
         self.custom_args_edit = QLineEdit()
         self.custom_args_edit.setPlaceholderText("e.g. --no-progress --connect-attempts 5")
 
+        self.tags_edit = QLineEdit()
+        self.tags_edit.setPlaceholderText("e.g. Line A, RFID Batch")
+
         form.addRow("Friendly Name:", self.name_edit)
         form.addRow("Port:", self.port_combo)
         form.addRow("Chip Type:", self.chip_combo)
@@ -87,6 +90,7 @@ class DeviceSettingsWidget(QWidget):
         form.addRow(self.compression_check)
         form.addRow(self.stub_check)
         form.addRow("Custom Flash Arguments:", self.custom_args_edit)
+        form.addRow("Tags (comma-separated):", self.tags_edit)
 
         layout.addLayout(form)
         layout.addStretch(1)
@@ -117,6 +121,7 @@ class DeviceSettingsWidget(QWidget):
         self.compression_check.toggled.connect(self._commit)
         self.stub_check.toggled.connect(self._commit)
         self.custom_args_edit.editingFinished.connect(self._commit)
+        self.tags_edit.editingFinished.connect(self._commit)
 
         self.set_device(None)
 
@@ -161,12 +166,13 @@ class DeviceSettingsWidget(QWidget):
         self.compression_check.setChecked(display.compression)
         self.stub_check.setChecked(display.stub_loader)
         self.custom_args_edit.setText(display.custom_flash_args if device else "")
+        self.tags_edit.setText(", ".join(display.tags) if device else "")
 
         for widget in (
             self.name_edit, self.port_combo, self.chip_combo, self.baud_combo,
             self.flash_mode_combo, self.flash_freq_combo, self.flash_size_combo,
             self.erase_check, self.reset_check,
-            self.compression_check, self.stub_check, self.custom_args_edit,
+            self.compression_check, self.stub_check, self.custom_args_edit, self.tags_edit,
         ):
             widget.setEnabled(enabled)
 
@@ -231,5 +237,6 @@ class DeviceSettingsWidget(QWidget):
         device.compression = self.compression_check.isChecked()
         device.stub_loader = self.stub_check.isChecked()
         device.custom_flash_args = self.custom_args_edit.text()
+        device.tags = [t.strip() for t in self.tags_edit.text().split(",") if t.strip()]
         self.refresh_display()
         self.settings_changed.emit(device.id)

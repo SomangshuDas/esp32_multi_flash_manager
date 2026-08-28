@@ -110,6 +110,13 @@ flashing (useful for temporarily excluding a file without deleting it).
 Addresses are edited in place in the table; entering something that isn't
 valid hex (e.g. `0x10000`) is rejected with a warning.
 
+**MD5 checksums** shown in this table are always recalculated fresh from
+the actual `.bin` file on disk — every time the project loads, not read
+from what was saved last time. If a firmware file was rebuilt or replaced
+since it was added (or since the project was last opened), its row is
+flagged **"(changed!)"** so you notice before flashing a stale build by
+mistake.
+
 ![Add BIN file picker dialog](images/add-bin-dialog.png)
 
 ![Firmware tab after adding bootloader, partition table, boot_app0, and app images](images/firmware-tab-populated.png)
@@ -329,6 +336,11 @@ devices** or just the **currently selected** ones, in one action — handy
 when you realize halfway through setup that every board should use
 230400 baud instead of the default 115200.
 
+One field, **Tags (Add)**, behaves differently from the rest: instead of
+overwriting each device's tags, it *adds* the tag you type to whatever
+tags each targeted device already has (no duplicates). See §21 "Device
+Groups & Tags" below for what tags are for.
+
 ## 11. Firmware Profiles
 
 **Devices → Firmware Profiles...** with a device selected lets you:
@@ -375,7 +387,13 @@ including the same missing-firmware warning behavior above.
 ## 13. Searching devices
 
 Type into the search box above the device list to filter by name,
-port, chip type, or current status — the list narrows as you type.
+port, chip type, current status, or tag — the list narrows as you type.
+The **tag dropdown** next to the search box narrows the list further to
+just one tag/group at a time (e.g. "Line A"), and combines with whatever
+you've typed in the search box. The **sort dropdown** re-orders the table
+by Order Added, Name, or Tag — this only changes how the table is
+*displayed*; it never changes the actual saved device order (so "Upload
+All" and your project file are unaffected). See §21 for more on tags.
 
 ## 14. Flash history
 
@@ -383,19 +401,45 @@ port, chip type, or current status — the list narrows as you type.
 
 The **Flash History** dock (bottom of the window, toggle via **View**
 menu) accumulates every attempt across the session: date, time, device
-name, port, firmware summary, duration, and result. Click **Export
-CSV...** to save it for QA/traceability records, or **Clear History** to
-reset it.
+name, port, **MAC address**, firmware summary, duration, result, and
+**QC Status**. Click **Export CSV...** to save it for QA/traceability
+records, or **Clear History** to reset it.
+
+**Searching & filtering.** Above the table: a text box searches by device
+name, port, or MAC address; dropdowns narrow by Result (Completed/Failed/
+Cancelled) and QC Status; and a From/To date range narrows by when the
+attempt happened. All filters combine (AND). **Clear Filters** resets
+everything back to showing the full history.
+
+**QC Verification.** Once a device's flash **Completed** successfully, its
+row gets an active **QC Status** dropdown — mark it **Pass** or **Fail**
+after you've physically checked the board (LEDs light up, RFID reads
+correctly, whatever your bench test is). Rows that never completed a
+flash stay at **Not Tested** and can't be marked, since there's nothing to
+QC yet. QC Status is included in the CSV export.
+
+**Device Traceability.** Each successful flash automatically records the
+device's **MAC address**, captured the same way as the Chip Info panel
+reads it (§6) — no extra step needed, esptool reports the MAC during
+every connect, including a normal flash. This lets you trace a specific
+physical board back to exactly which firmware/session flashed it, even
+weeks later.
 
 ## 15. Settings
 
 ![Settings dialog](images/settings-dialog.png)
 
-**Tools → Settings...** lets you set:
+**Tools → Settings...** is organized into two tabs:
+
+**General:**
 - **Theme** — **System Default** (follows your OS's light/dark setting,
   live — no restart needed if you switch your OS theme while the app is
   open), or explicit **Dark**/**Light**.
 - Default baud rate and default flash mode for new devices.
+- **Auto-Save** — Disabled, or every 1/2/5/10 (default)/15/30 minutes. A
+  brand-new project that hasn't been saved to disk yet is never
+  auto-saved (there's nowhere to write it to yet) — save it once manually
+  first. See §22.
 - **Bin Merge defaults** — default merged filename, default output
   location (leave blank to always use the same folder as `firmware.bin`),
   and the default **Post-Merge Action** pre-selected in the Merge Bins
@@ -403,6 +447,8 @@ reset it.
 
 A one-click **Open Logs Folder** button is also here if you need to send
 logs to support.
+
+**Sounds:** see §23 "Sounds & Notifications" below.
 
 ## 16. Serial Monitor
 
@@ -509,7 +555,63 @@ Selected, Retry Failed) has no default shortcut and isn't customisable.
 | `Ctrl+Shift+F` | Settings Lock |
 | `Ctrl+Q` | Exit |
 
-## 20. Troubleshooting
+## 21. Device Groups & Tags
+
+Assign free-text tags to any device on its **Device Settings** tab (e.g.
+`Line A`, `RFID Batch`) — comma-separated if a device belongs to more than
+one group. Tags are purely organizational: they never change how a device
+flashes.
+
+Use them to:
+- **Filter** the device list down to one tag via the dropdown next to the
+  search box (§13), or type a tag into the search box itself.
+- **Sort** the device list by tag (the sort dropdown, §13) to visually
+  cluster devices that share a tag, without changing the underlying saved
+  device order.
+- **Batch-add** a tag to many devices at once via **Devices → Batch
+  Edit... → Tags (Add)** (§10) rather than tagging one at a time.
+
+Duplicating a device (§3) copies its tags to the clone, since a duplicate
+is usually another unit on the same line/batch. Tags are saved with the
+project file like any other device setting.
+
+## 22. Auto-Save
+
+**Tools → Settings → General → Auto-Save** silently saves your current
+project on an interval you choose: Disabled, or every 1, 2, 5, 10
+(default), 15, or 30 minutes.
+
+Two things it deliberately will NOT do:
+- **Auto-save a brand-new, never-saved project.** If you haven't run
+  **File → Save Project** at least once, there's no file path to write
+  to yet — the app won't pick one for you behind your back. Save once
+  manually to "activate" auto-save for that project.
+- **Auto-save when there's nothing new to save.** If the project hasn't
+  changed since the last save (manual or automatic), each timer tick is a
+  silent no-op.
+
+A brief "Auto-saved." message appears in the status bar each time it
+fires, so it's never a surprise. Manually saving (`Ctrl+S`) at any time
+resets nothing about the timer — it just runs on its own fixed interval
+in the background.
+
+## 23. Sounds & Notifications
+
+**Tools → Settings → Sounds** lets you turn on short notification sounds
+for: a device's flash succeeding, a device's flash failing, a whole batch
+finishing, and a device connecting/disconnecting over USB. A master
+**Enable sounds** checkbox turns all of them on/off at once; each event
+also has its own checkbox so you can enable just the ones you care about
+(flash failures and batch-complete are on by default; the rest start
+off).
+
+Leave an event's sound file blank to use a simple system beep, or
+**Browse...** to pick your own `.wav`/`.mp3`/`.ogg` file — handy for
+something that cuts through workshop background noise better than a beep.
+**Test** plays whatever's currently in that field immediately, regardless
+of whether that event is enabled, so you can preview it before saving.
+
+## 24. Troubleshooting
 
 - **"esptool could not be launched"** — make sure `pip install -r
   requirements.txt` succeeded and that `python -m esptool version` works

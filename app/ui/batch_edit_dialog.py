@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QLineEdit, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from app.ui.widgets import make_scrollable
@@ -28,6 +28,11 @@ def _build_fields(supported_chips: list[str]) -> dict:
         "Reset After Upload": ("reset_after_upload", "bool", None),
         "Compression": ("compression", "bool", None),
         "Stub Loader": ("stub_loader", "bool", None),
+        # Special-cased by the caller (MainWindow._on_batch_edit): rather
+        # than overwrite each device's tag list like every other field
+        # here, this ADDS one tag to whatever tags a device already has
+        # (see DeviceController.add_tag_to_devices).
+        "Tags (Add)": ("tags", "text", None),
     }
 
 
@@ -65,8 +70,11 @@ class BatchEditDialog(QDialog):
         self.value_stack = QStackedWidget()
         self._combo_widget = QComboBox()
         self._bool_widget = QCheckBox("Enabled")
+        self._text_widget = QLineEdit()
+        self._text_widget.setPlaceholderText("e.g. Line A")
         self.value_stack.addWidget(self._combo_widget)
         self.value_stack.addWidget(self._bool_widget)
+        self.value_stack.addWidget(self._text_widget)
         form.addRow("New Value:", self.value_stack)
 
         layout.addLayout(form)
@@ -86,6 +94,8 @@ class BatchEditDialog(QDialog):
             self._combo_widget.clear()
             self._combo_widget.addItems(options)
             self.value_stack.setCurrentWidget(self._combo_widget)
+        elif kind == "text":
+            self.value_stack.setCurrentWidget(self._text_widget)
         else:
             self.value_stack.setCurrentWidget(self._bool_widget)
 
@@ -100,6 +110,8 @@ class BatchEditDialog(QDialog):
         _, kind, _ = self._fields[field_label]
         if kind == "bool":
             return self._bool_widget.isChecked()
+        if kind == "text":
+            return self._text_widget.text().strip()
         text = self._combo_widget.currentText()
         if field_label == "Upload Speed (baud rate)":
             return int(text)

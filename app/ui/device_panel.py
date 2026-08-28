@@ -15,6 +15,7 @@ import time
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QHBoxLayout,
     QHeaderView,
     QLineEdit,
@@ -29,18 +30,24 @@ from PySide6.QtWidgets import (
 
 from app.models.device_model import DeviceConfig
 from app.ui.widgets import StatusBadge, fit_table_columns, make_scrollable
-from app.utilities.constants import ACTIVE_STATUSES
+from app.utilities.constants import (
+    ACTIVE_STATUSES,
+    DEVICE_SORT_LABELS,
+    DEVICE_SORT_OPTIONS,
+    TAG_FILTER_ALL,
+)
 from app.utilities.helpers import human_readable_duration
 
 COL_NAME = 0
 COL_PORT = 1
 COL_CHIP = 2
-COL_STATUS = 3
-COL_PROGRESS = 4
-COL_ELAPSED = 5
-COL_ETA = 6
-COL_SPEED = 7
-COL_LOG = 8
+COL_TAGS = 3
+COL_STATUS = 4
+COL_PROGRESS = 5
+COL_ELAPSED = 6
+COL_ETA = 7
+COL_SPEED = 8
+COL_LOG = 9
 
 
 class DevicePanel(QWidget):
@@ -67,6 +74,8 @@ class DevicePanel(QWidget):
     duplicate_devices_requested = Signal(list)
     upload_requested = Signal(list)
     cancel_requested = Signal(list)
+    tag_filter_changed = Signal(str)
+    sort_mode_changed = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -84,7 +93,18 @@ class DevicePanel(QWidget):
         self.remove_button = QPushButton("Remove")
         self.duplicate_button = QPushButton("Duplicate")
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search by name, port, chip, or status...")
+        self.search_box.setPlaceholderText("Search by name, port, chip, status, or tag...")
+
+        self.tag_filter_combo = QComboBox()
+        self.tag_filter_combo.addItem(TAG_FILTER_ALL)
+        self.tag_filter_combo.currentTextChanged.connect(self.tag_filter_changed.emit)
+
+        self.sort_combo = QComboBox()
+        for mode in DEVICE_SORT_OPTIONS:
+            self.sort_combo.addItem(DEVICE_SORT_LABELS[mode], mode)
+        self.sort_combo.currentIndexChanged.connect(
+            lambda _i: self.sort_mode_changed.emit(self.sort_combo.currentData())
+        )
 
         self.add_button.clicked.connect(self.add_device_requested.emit)
         self.remove_button.clicked.connect(self._emit_remove_selected)
@@ -94,11 +114,13 @@ class DevicePanel(QWidget):
         toolbar.addWidget(self.remove_button)
         toolbar.addWidget(self.duplicate_button)
         toolbar.addWidget(self.search_box, 1)
+        toolbar.addWidget(self.tag_filter_combo)
+        toolbar.addWidget(self.sort_combo)
         layout.addLayout(toolbar)
 
-        self.table = QTableWidget(0, 9)
+        self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels(
-            ["Name", "Port", "Chip", "Status", "Progress", "Elapsed", "ETA", "Speed", ""]
+            ["Name", "Port", "Chip", "Tags", "Status", "Progress", "Elapsed", "ETA", "Speed", ""]
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -114,7 +136,7 @@ class DevicePanel(QWidget):
         header.setStretchLastSection(False)
         header.setMinimumSectionSize(40)
         self._default_widths = {
-            COL_NAME: 200, COL_PORT: 130, COL_CHIP: 90, COL_STATUS: 110,
+            COL_NAME: 200, COL_PORT: 130, COL_CHIP: 90, COL_TAGS: 130, COL_STATUS: 110,
             COL_PROGRESS: 150, COL_ELAPSED: 80, COL_ETA: 80, COL_SPEED: 90,
             COL_LOG: 90,
         }
@@ -150,6 +172,7 @@ class DevicePanel(QWidget):
         self.table.setItem(row, COL_NAME, name_item)
         self.table.setItem(row, COL_PORT, QTableWidgetItem(device.com_port))
         self.table.setItem(row, COL_CHIP, QTableWidgetItem(device.chip_type))
+        self.table.setItem(row, COL_TAGS, QTableWidgetItem(", ".join(device.tags)))
 
         badge = StatusBadge(device.runtime.status)
         self.table.setCellWidget(row, COL_STATUS, badge)
@@ -187,6 +210,7 @@ class DevicePanel(QWidget):
         self.table.item(row, COL_NAME).setText(device.name)
         self.table.item(row, COL_PORT).setText(device.com_port)
         self.table.item(row, COL_CHIP).setText(device.chip_type)
+        self.table.item(row, COL_TAGS).setText(", ".join(device.tags))
         fit_table_columns(self.table, self._default_widths)
 
     # ------------------------------------------------------------------
@@ -304,3 +328,22 @@ class DevicePanel(QWidget):
         """Hide rows whose device id is not in `visible_ids` (None = show all)."""
         for device_id, row in self._row_by_device_id.items():
             self.table.setRowHidden(row, visible_ids is not None and device_id not in visible_ids)
+
+    # ------------------------------------------------------------------
+    # Tag filtering (see MainWindow._apply_device_filters)
+    # ------------------------------------------------------------------
+    def set_tag_filter_options(self, tags: list[str]) -> None:
+        """Repopulate the tag filter dropdown from the project's current
+        distinct tag set, preserving the current selection if it still
+        exists (falling back to "All Tags" if it was removed)."""
+        current = self.tag_filter_combo.currentText()
+        self.tag_filter_combo.blockSignals(True)
+        self.tag_filter_combo.clear()
+        self.tag_filter_combo.addItem(TAG_FILTER_ALL)
+        self.tag_filter_combo.addItems(tags)
+        index = self.tag_filter_combo.findText(current)
+        self.tag_filter_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.tag_filter_combo.blockSignals(False)
+
+    def selected_tag_filter(self) -> str:
+        return self.tag_filter_combo.currentText()

@@ -17,6 +17,7 @@ from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
 from app.models.history_model import HistoryEntry
 from app.utilities.constants import STATUS_WAITING
+from app.utilities.read_output_parser import extract_mac_address
 from app.workers.flash_worker import FlashWorker
 
 logger = get_logger(__name__)
@@ -51,6 +52,11 @@ class FlashController(QObject):
         self._batch_size = 0
         self._batch_results: dict[str, bool] = {}
         self._batch_start_time: float = 0.0
+        # Device Traceability: first MAC address seen in each device's own
+        # log output for its CURRENT flash run (esptool prints "MAC: ..."
+        # during connect on every command, including write_flash) --
+        # cleared per-device once a HistoryEntry has consumed it.
+        self._device_macs: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     def is_busy(self, device_id: str) -> bool:
@@ -92,14 +98,28 @@ class FlashController(QObject):
 
     # ------------------------------------------------------------------
     def _launch_worker(self, device: DeviceConfig) -> None:
+        self._device_macs.pop(device.id, None)
         worker = FlashWorker(device)
         worker.status_changed.connect(self.device_status_changed)
         worker.progress_changed.connect(self.device_progress_changed)
         worker.speed_changed.connect(self.device_speed_changed)
         worker.log_line.connect(self.device_log_line)
+        worker.log_line.connect(self._capture_mac_from_log)
         worker.finished_flash.connect(self._on_worker_finished)
         self._workers[device.id] = worker
         worker.start()
+
+    def _capture_mac_from_log(self, device_id: str, line: str) -> None:
+        """Device Traceability: opportunistically pull the MAC address out
+        of a device's own live log output as it streams in, reusing the
+        exact same parsing helper the Read Flash/eFuse Chip Info panel is
+        built on (see app/utilities/read_output_parser.extract_mac_address).
+        Only the first match per run is kept."""
+        if device_id in self._device_macs:
+            return
+        mac = extract_mac_address(line)
+        if mac:
+            self._device_macs[device_id] = mac
 
     def _on_worker_finished(self, device_id: str, success: bool, message: str, duration: float) -> None:
         self.device_finished.emit(device_id, success, message, duration)
@@ -113,7 +133,11 @@ class FlashController(QObject):
             if worker else ""
         )
         result = "Completed" if success else ("Cancelled" if "Cancelled" in message else "Failed")
-        entry = HistoryEntry.create(device_name, com_port, firmware_summary, duration, result)
+        mac_address = self._device_macs.pop(device_id, "")
+        entry = HistoryEntry.create(
+            device_name, com_port, firmware_summary, duration, result,
+            device_id=device_id, mac_address=mac_address,
+        )
         self.history_entry_created.emit(entry)
 
         if len(self._batch_results) >= self._batch_size:

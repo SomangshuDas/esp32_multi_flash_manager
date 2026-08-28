@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray, QUrl
+from PySide6.QtCore import QByteArray, QUrl, QTimer
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -75,12 +75,28 @@ from app.utilities.chip_detect import detect_supported_chips, find_unsupported_c
 from app.utilities.constants import (
     APP_NAME,
     APP_VERSION,
+    AUTOSAVE_INTERVAL_DISABLED,
+    DEFAULT_AUTOSAVE_INTERVAL_MINUTES,
     DEFAULT_SERIAL_MONITOR_BAUD,
     DEFAULT_THEME,
+    DEVICE_SORT_LABELS,
+    DEVICE_SORT_NAME,
+    DEVICE_SORT_ORDER_ADDED,
+    DEVICE_SORT_OPTIONS,
+    DEVICE_SORT_TAG,
     LIVE_LOG_MAX_LINES,
     PROJECT_FILE_FILTER,
+    SETTINGS_KEY_AUTOSAVE_INTERVAL,
     SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH,
     SETTINGS_KEY_THEME,
+    SOUND_EVENT_BATCH_COMPLETE,
+    SOUND_EVENT_DEVICE_CONNECTED,
+    SOUND_EVENT_DEVICE_DISCONNECTED,
+    SOUND_EVENT_FLASH_FAILURE,
+    SOUND_EVENT_FLASH_SUCCESS,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    TAG_FILTER_ALL,
     THEME_DARK,
     THEME_LIGHT,
     THEME_SYSTEM,
@@ -88,6 +104,7 @@ from app.utilities.constants import (
 )
 from app.utilities.helpers import resource_path, safe_filename
 from app.utilities.shortcuts import get_shortcuts, save_shortcuts
+from app.utilities.sound_player import play_event_sound
 from app.utilities.update_checker import check_for_update
 from app.workers.port_watcher import PortWatcher
 
@@ -150,6 +167,12 @@ class MainWindow(QMainWindow):
         self.port_watcher.start()
         self._refresh_dashboard()
         self._restore_window_layout()
+
+        # ---------------- Auto-Save ----------------
+        self._device_sort_mode = DEVICE_SORT_ORDER_ADDED
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.timeout.connect(self._on_autosave_timeout)
+        self._apply_autosave_interval()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -338,6 +361,8 @@ class MainWindow(QMainWindow):
         self.device_panel.upload_requested.connect(self._upload_device_ids)
         self.device_panel.cancel_requested.connect(self._cancel_device_ids)
         self.device_panel.search_box.textChanged.connect(self._on_search_changed)
+        self.device_panel.tag_filter_changed.connect(self._on_tag_filter_changed)
+        self.device_panel.sort_mode_changed.connect(self._on_sort_mode_changed)
 
         self.device_controller.device_added.connect(self._on_device_added)
         self.device_controller.device_removed.connect(self.device_panel.remove_device_row)
@@ -366,8 +391,8 @@ class MainWindow(QMainWindow):
 
         # Port watcher
         self.port_watcher.ports_changed.connect(self._on_ports_changed)
-        self.port_watcher.port_connected.connect(lambda name: self.statusBar().showMessage(f"Device connected: {name}", 3000))
-        self.port_watcher.port_disconnected.connect(lambda name: self.statusBar().showMessage(f"Device disconnected: {name}", 3000))
+        self.port_watcher.port_connected.connect(self._on_port_connected)
+        self.port_watcher.port_disconnected.connect(self._on_port_disconnected)
 
     # ------------------------------------------------------------------
     # Device list <-> controller glue
@@ -376,9 +401,10 @@ class MainWindow(QMainWindow):
         self.device_controller.add_device()
 
     def _on_device_added(self, device_id: str) -> None:
-        self.device_panel.rebuild(self.device_controller.devices())
+        self.device_panel.rebuild(self._get_sorted_devices())
         self.project_controller.mark_dirty()
         self._refresh_dashboard()
+        self._refresh_tag_filter_options()
 
     def _on_remove_devices(self, device_ids: list[str]) -> None:
         # A device that's mid-flash (Preparing/Connecting/Erasing/Uploading/
@@ -415,8 +441,9 @@ class MainWindow(QMainWindow):
     def _on_duplicate_devices(self, device_ids: list[str]) -> None:
         for device_id in device_ids:
             self.device_controller.duplicate_device(device_id)
-        self.device_panel.rebuild(self.device_controller.devices())
+        self.device_panel.rebuild(self._get_sorted_devices())
         self.project_controller.mark_dirty()
+        self._refresh_tag_filter_options()
 
     def _on_device_selected(self, device_id: str | None) -> None:
         device = self.device_controller.get_device(device_id) if device_id else None
@@ -434,6 +461,7 @@ class MainWindow(QMainWindow):
             if self.security_widget.current_device_id() == device_id:
                 self.security_widget.refresh_display()
         self.project_controller.mark_dirty()
+        self._refresh_tag_filter_options()
 
     def _on_device_updated(self, device_id: str) -> None:
         device = self.device_controller.get_device(device_id)
@@ -443,17 +471,50 @@ class MainWindow(QMainWindow):
                 self.settings_widget.refresh_display()
             if self.security_widget.current_device_id() == device_id:
                 self.security_widget.refresh_display()
+        self._refresh_tag_filter_options()
 
     def _on_devices_reset(self) -> None:
-        self.device_panel.rebuild(self.device_controller.devices())
+        self.device_panel.rebuild(self._get_sorted_devices())
         self._refresh_dashboard()
+        self._refresh_tag_filter_options()
 
-    def _on_search_changed(self, text: str) -> None:
-        if not text.strip():
+    def _get_sorted_devices(self) -> list:
+        """Return the project's devices ordered per the DevicePanel's
+        current sort mode. This is a DISPLAY-ONLY ordering -- it never
+        mutates project.devices itself, so "Upload All", saved project
+        order, etc. are unaffected by how the table happens to be sorted."""
+        devices = list(self.device_controller.devices())
+        if self._device_sort_mode == DEVICE_SORT_NAME:
+            devices.sort(key=lambda d: d.name.lower())
+        elif self._device_sort_mode == DEVICE_SORT_TAG:
+            devices.sort(key=lambda d: (", ".join(sorted(d.tags)).lower(), d.name.lower()))
+        return devices
+
+    def _on_sort_mode_changed(self, mode: str) -> None:
+        self._device_sort_mode = mode
+        self.device_panel.rebuild(self._get_sorted_devices())
+
+    def _refresh_tag_filter_options(self) -> None:
+        self.device_panel.set_tag_filter_options(self.device_controller.all_tags())
+
+    def _on_tag_filter_changed(self, tag: str) -> None:
+        self._apply_device_filters()
+
+    def _apply_device_filters(self) -> None:
+        """Combine the free-text search box and the tag filter combo (AND
+        semantics) into one visible-row set for the device table."""
+        query = self.device_panel.search_box.text()
+        tag = self.device_panel.selected_tag_filter()
+        candidates = self.device_controller.search(query) if query.strip() else self.device_controller.devices()
+        if tag and tag != TAG_FILTER_ALL:
+            candidates = [d for d in candidates if tag in d.tags]
+        if not query.strip() and (not tag or tag == TAG_FILTER_ALL):
             self.device_panel.apply_search_filter(None)
             return
-        visible = {d.id for d in self.device_controller.search(text)}
-        self.device_panel.apply_search_filter(visible)
+        self.device_panel.apply_search_filter({d.id for d in candidates})
+
+    def _on_search_changed(self, text: str) -> None:
+        self._apply_device_filters()
 
     # ------------------------------------------------------------------
     # Firmware profiles
@@ -522,12 +583,19 @@ class MainWindow(QMainWindow):
             if not target_ids:
                 return
 
-            self.device_controller.apply_to_selected(target_ids, field, value)
-            self.device_panel.rebuild(self.device_controller.devices())
+            if field == "tags":
+                if not value:
+                    QMessageBox.information(self, "Batch Edit", "Enter a tag to add first.")
+                    return
+                self.device_controller.add_tag_to_devices(target_ids, value)
+            else:
+                self.device_controller.apply_to_selected(target_ids, field, value)
+            self.device_panel.rebuild(self._get_sorted_devices())
             selected = self.device_panel.selected_device_ids()
             if selected:
                 self._on_device_selected(selected[0])
             self.project_controller.mark_dirty()
+            self._refresh_tag_filter_options()
 
     # ------------------------------------------------------------------
     # Assign Firmware Set to Devices
@@ -568,7 +636,7 @@ class MainWindow(QMainWindow):
             return
 
         updated = self.device_controller.apply_firmware_to_devices(target_ids, entries)
-        self.device_panel.rebuild(self.device_controller.devices())
+        self.device_panel.rebuild(self._get_sorted_devices())
         current = self.device_panel.selected_device_ids()
         if current:
             self._on_device_selected(current[0])
@@ -839,6 +907,10 @@ class MainWindow(QMainWindow):
             self.settings_widget.set_locked(self.flash_controller.is_busy(device_id))
         if self.security_widget.current_device_id() == device_id:
             self.security_widget.set_locked(self.flash_controller.is_busy(device_id))
+        if status == STATUS_COMPLETED:
+            play_event_sound(SOUND_EVENT_FLASH_SUCCESS)
+        elif status == STATUS_FAILED:
+            play_event_sound(SOUND_EVENT_FLASH_FAILURE)
         self._refresh_dashboard()
 
     def _on_device_progress(self, device_id: str, percent: int, address: str) -> None:
@@ -862,6 +934,7 @@ class MainWindow(QMainWindow):
     def _on_batch_finished(self, succeeded: int, failed: int) -> None:
         self.overall_progress.setValue(100)
         self.status_label.setText(f"Batch finished: {succeeded} succeeded, {failed} failed.")
+        play_event_sound(SOUND_EVENT_BATCH_COMPLETE)
         self._refresh_dashboard()
 
     def _on_view_log(self, device_id: str) -> None:
@@ -1055,6 +1128,14 @@ class MainWindow(QMainWindow):
         self.settings_widget.refresh_available_ports()
         self._refresh_dashboard()
 
+    def _on_port_connected(self, name: str) -> None:
+        self.statusBar().showMessage(f"Device connected: {name}", 3000)
+        play_event_sound(SOUND_EVENT_DEVICE_CONNECTED)
+
+    def _on_port_disconnected(self, name: str) -> None:
+        self.statusBar().showMessage(f"Device disconnected: {name}", 3000)
+        play_event_sound(SOUND_EVENT_DEVICE_DISCONNECTED)
+
     def _refresh_dashboard(self) -> None:
         self.dashboard.refresh(self.device_controller.devices(), self._connected_ports)
 
@@ -1188,6 +1269,37 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             dialog.save()
             self._apply_theme(dialog.selected_theme())
+            self._apply_autosave_interval()
+
+    # ------------------------------------------------------------------
+    # Auto-Save
+    # ------------------------------------------------------------------
+    def _apply_autosave_interval(self) -> None:
+        """(Re)start the auto-save timer to match the current Settings
+        value. Called at startup and every time Settings is saved."""
+        minutes = int(self.settings.value(SETTINGS_KEY_AUTOSAVE_INTERVAL, DEFAULT_AUTOSAVE_INTERVAL_MINUTES))
+        self.autosave_timer.stop()
+        if minutes > AUTOSAVE_INTERVAL_DISABLED:
+            self.autosave_timer.start(minutes * 60 * 1000)
+
+    def _on_autosave_timeout(self) -> None:
+        """
+        Silently save the current project if it has unsaved changes AND has
+        already been saved to disk at least once. A brand-new project that
+        has never been saved (current_file_path is None) is always skipped
+        -- there is no destination to write to, and picking one on the
+        user's behalf without asking would be surprising mid-session.
+        """
+        if self.project_controller.current_file_path is None:
+            return
+        if not self.project_controller.dirty:
+            return
+        if self.lock_overlay.isVisible():
+            # Don't touch anything while Full Lock is up.
+            return
+        if self.project_controller.save_project():
+            logger.info("Auto-saved project to %s", self.project_controller.current_file_path)
+            self.statusBar().showMessage("Auto-saved.", 3000)
 
     def _on_open_shortcuts_dialog(self) -> None:
         dialog = ShortcutsDialog(self)

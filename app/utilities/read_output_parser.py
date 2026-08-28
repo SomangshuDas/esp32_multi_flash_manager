@@ -60,6 +60,15 @@ _EFUSE_FIELDS_OF_INTEREST = (
     ("RD_DIS", "Read-Protected eFuse Blocks"),
 )
 
+# esptool prints "MAC: xx:xx:xx:xx:xx:xx" (or "MAC address: ...") during the
+# connect phase of EVERY command that talks to a chip -- Chip Info reads,
+# Read Flash Region, and (notably) `write_flash` itself. This single regex
+# is shared by _parse_chip_info's Summary-tab row below AND by
+# app/controllers/flash_controller.py, which scans a normal flashing run's
+# own log output for it to capture device traceability (see
+# extract_mac_address()) without needing a separate Read operation.
+_MAC_ADDRESS_PATTERN = r"mac(?:\s*address)?:\s*([0-9a-f:]{17})"
+
 
 def _clean_lines(raw_text: str) -> list[str]:
     lines = []
@@ -98,7 +107,7 @@ def _parse_chip_info(lines: list[str]) -> list[tuple[str, str]]:
     if crystal:
         rows.append(("Crystal Frequency", crystal))
 
-    mac = _first_match(r"mac(?:\s*address)?:\s*([0-9a-f:]{17})", lines)
+    mac = _first_match(_MAC_ADDRESS_PATTERN, lines)
     if mac:
         rows.append(("MAC Address", mac))
 
@@ -268,3 +277,21 @@ def parse_read_output(
     if mode == READ_MODE_EFUSE_SUMMARY:
         return _parse_efuse_summary(lines)
     return []
+
+
+def extract_mac_address(raw_text: str) -> str | None:
+    """
+    Scan `raw_text` (any esptool/espefuse output -- Chip Info, Read Flash,
+    or a plain `write_flash` run) for a "MAC: xx:xx:xx:xx:xx:xx" line and
+    return the address, or None if not found. Never raises.
+
+    This is the SAME regex used by the Chip Info Summary tab
+    (_parse_chip_info above) -- it's factored out here so
+    FlashController can reuse it for Device Traceability (attaching the
+    MAC address to a flash history entry) without duplicating the pattern
+    or requiring a separate Read Flash/eFuse operation to run first.
+    """
+    try:
+        return _first_match(_MAC_ADDRESS_PATTERN, _clean_lines(raw_text))
+    except Exception:  # noqa: BLE001 - never let a parsing hiccup break a flash job
+        return None

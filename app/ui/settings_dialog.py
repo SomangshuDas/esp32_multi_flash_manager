@@ -14,42 +14,68 @@ from __future__ import annotations
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-    QLineEdit, QPushButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTabWidget,
+    QVBoxLayout, QWidget,
 )
 
 from app.logging_setup.logger import configure_logging
 from app.ui.widgets import make_scrollable
 from app.utilities.app_settings import get_settings
 from app.utilities.constants import (
+    AUTOSAVE_INTERVAL_LABELS,
+    AUTOSAVE_INTERVAL_OPTIONS,
     BAUD_RATES,
+    DEFAULT_AUTOSAVE_INTERVAL_MINUTES,
     DEFAULT_BAUD,
+    DEFAULT_ENABLED_SOUND_EVENTS,
     DEFAULT_FLASH_MODE,
     DEFAULT_MERGE_OUTPUT_LOCATION,
     DEFAULT_MERGE_POST_ACTION,
     DEFAULT_MERGED_BIN_FILENAME,
+    DEFAULT_SOUNDS_ENABLED,
     DEFAULT_THEME,
     FLASH_MODES,
     MERGE_POST_ACTION_LABELS,
     MERGE_POST_ACTIONS,
+    SETTINGS_KEY_AUTOSAVE_INTERVAL,
     SETTINGS_KEY_MERGE_DEFAULT_FILENAME,
     SETTINGS_KEY_MERGE_DEFAULT_LOCATION,
     SETTINGS_KEY_MERGE_POST_ACTION,
+    SETTINGS_KEY_SOUND_EVENT_ENABLED_PREFIX,
+    SETTINGS_KEY_SOUND_EVENT_PATH_PREFIX,
+    SETTINGS_KEY_SOUNDS_ENABLED,
     SETTINGS_KEY_THEME,
+    SOUND_EVENT_LABELS,
+    SOUND_EVENTS,
     THEME_OPTION_LABELS,
     THEME_OPTIONS,
 )
+from app.utilities.sound_player import play_preview_sound
 
 
 class SettingsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.resize(440, 340)
+        self.resize(480, 460)
         self.settings = get_settings()
 
         outer_layout = QVBoxLayout(self)
 
+        tabs = QTabWidget()
+        outer_layout.addWidget(tabs, 1)
+
+        tabs.addTab(self._build_general_tab(), "General")
+        tabs.addTab(self._build_sounds_tab(), "Sounds")
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        outer_layout.addWidget(buttons)
+
+    # ------------------------------------------------------------------
+    def _build_general_tab(self) -> QWidget:
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -72,6 +98,21 @@ class SettingsDialog(QDialog):
         self.flash_mode_combo.addItems(FLASH_MODES)
         self.flash_mode_combo.setCurrentText(self.settings.value("default_flash_mode", DEFAULT_FLASH_MODE))
         form.addRow("Default Flash Mode:", self.flash_mode_combo)
+
+        # ---- Auto-Save ----
+        self.autosave_combo = QComboBox()
+        for minutes in AUTOSAVE_INTERVAL_OPTIONS:
+            self.autosave_combo.addItem(AUTOSAVE_INTERVAL_LABELS[minutes], minutes)
+        current_autosave = int(self.settings.value(SETTINGS_KEY_AUTOSAVE_INTERVAL, DEFAULT_AUTOSAVE_INTERVAL_MINUTES))
+        autosave_index = self.autosave_combo.findData(current_autosave)
+        self.autosave_combo.setCurrentIndex(autosave_index if autosave_index >= 0 else 0)
+        form.addRow("Auto-Save:", self.autosave_combo)
+        autosave_note = QLabel(
+            "New projects that have not been saved to disk yet are never auto-saved."
+        )
+        autosave_note.setWordWrap(True)
+        autosave_note.setStyleSheet("color: #8a8f98; font-size: 11px;")
+        form.addRow("", autosave_note)
 
         # ---- Bin Merge defaults ----
         self.merge_filename_edit = QLineEdit()
@@ -105,13 +146,63 @@ class SettingsDialog(QDialog):
         logs_button = QPushButton("Open Logs Folder")
         logs_button.clicked.connect(self._open_logs_folder)
         layout.addWidget(logs_button)
+        layout.addStretch(1)
 
-        outer_layout.addWidget(make_scrollable(content), 1)
+        return make_scrollable(content)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        outer_layout.addWidget(buttons)
+    def _build_sounds_tab(self) -> QWidget:
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.sounds_enabled_check = QCheckBox("Enable sounds")
+        self.sounds_enabled_check.setChecked(
+            bool(self.settings.value(SETTINGS_KEY_SOUNDS_ENABLED, DEFAULT_SOUNDS_ENABLED, type=bool))
+        )
+        layout.addWidget(self.sounds_enabled_check)
+
+        events_box = QGroupBox("Events")
+        events_layout = QVBoxLayout(events_box)
+        self._sound_event_checks: dict[str, QCheckBox] = {}
+        self._sound_event_paths: dict[str, QLineEdit] = {}
+        for event in SOUND_EVENTS:
+            row = QHBoxLayout()
+            check = QCheckBox(SOUND_EVENT_LABELS[event])
+            default_enabled = event in DEFAULT_ENABLED_SOUND_EVENTS
+            check.setChecked(
+                bool(self.settings.value(
+                    f"{SETTINGS_KEY_SOUND_EVENT_ENABLED_PREFIX}{event}", default_enabled, type=bool,
+                ))
+            )
+            path_edit = QLineEdit()
+            path_edit.setPlaceholderText("(default system beep)")
+            path_edit.setText(str(self.settings.value(f"{SETTINGS_KEY_SOUND_EVENT_PATH_PREFIX}{event}", "")))
+            browse = QPushButton("Browse...")
+            browse.clicked.connect(lambda _c, e=path_edit: self._browse_sound_file(e))
+            test = QPushButton("Test")
+            test.clicked.connect(lambda _c, e=path_edit: play_preview_sound(e.text().strip()))
+            row.addWidget(check, 1)
+            row.addWidget(path_edit, 2)
+            row.addWidget(browse)
+            row.addWidget(test)
+            events_layout.addLayout(row)
+            self._sound_event_checks[event] = check
+            self._sound_event_paths[event] = path_edit
+        layout.addWidget(events_box)
+        layout.addStretch(1)
+
+        self.sounds_enabled_check.toggled.connect(events_box.setEnabled)
+        events_box.setEnabled(self.sounds_enabled_check.isChecked())
+
+        return make_scrollable(content)
+
+    def _browse_sound_file(self, target_edit: QLineEdit) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose Sound File", target_edit.text(), "Sound Files (*.wav *.mp3 *.ogg)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
+        if path:
+            target_edit.setText(path)
 
     def _browse_merge_location(self) -> None:
         folder = QFileDialog.getExistingDirectory(
@@ -132,6 +223,13 @@ class SettingsDialog(QDialog):
         self.settings.setValue(SETTINGS_KEY_THEME, self.theme_combo.currentData())
         self.settings.setValue("default_baud", int(self.baud_combo.currentText()))
         self.settings.setValue("default_flash_mode", self.flash_mode_combo.currentText())
+        self.settings.setValue(SETTINGS_KEY_AUTOSAVE_INTERVAL, int(self.autosave_combo.currentData()))
         self.settings.setValue(SETTINGS_KEY_MERGE_DEFAULT_FILENAME, self.merge_filename_edit.text().strip() or DEFAULT_MERGED_BIN_FILENAME)
         self.settings.setValue(SETTINGS_KEY_MERGE_DEFAULT_LOCATION, self.merge_location_edit.text().strip())
         self.settings.setValue(SETTINGS_KEY_MERGE_POST_ACTION, self.merge_post_action_combo.currentData())
+
+        self.settings.setValue(SETTINGS_KEY_SOUNDS_ENABLED, self.sounds_enabled_check.isChecked())
+        for event, check in self._sound_event_checks.items():
+            self.settings.setValue(f"{SETTINGS_KEY_SOUND_EVENT_ENABLED_PREFIX}{event}", check.isChecked())
+        for event, path_edit in self._sound_event_paths.items():
+            self.settings.setValue(f"{SETTINGS_KEY_SOUND_EVENT_PATH_PREFIX}{event}", path_edit.text().strip())

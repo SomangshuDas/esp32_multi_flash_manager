@@ -197,8 +197,21 @@ class FirmwarePanel(QWidget):
         size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.table.setItem(row, COL_SIZE, size_item)
 
-        md5_item = QTableWidgetItem(entry.md5 or "-")
+        # MD5 is always freshly recalculated from disk (see
+        # FirmwareEntry.refresh()) rather than trusted from the project
+        # file -- if it just changed since the entry was added/last loaded,
+        # that's flagged here rather than silently shown as if nothing
+        # happened, since it usually means the BIN was rebuilt/replaced.
+        md5_text = entry.md5 or "-"
+        md5_item = QTableWidgetItem(f"{md5_text} (changed!)" if entry.md5_changed else md5_text)
         md5_item.setFlags(md5_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        if entry.md5_changed:
+            md5_item.setForeground(Qt.GlobalColor.darkYellow)
+            md5_item.setToolTip(
+                "This BIN file's MD5 changed since it was added or the project was last "
+                "opened -- it was recalculated fresh from disk just now, not read from "
+                "the project file."
+            )
         self.table.setItem(row, COL_MD5, md5_item)
 
         status_item = QTableWidgetItem("Missing!" if entry.missing else "OK")

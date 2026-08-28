@@ -150,6 +150,11 @@ class DeviceConfig:
     custom_flash_args: str = ""
     firmware: list[FirmwareEntry] = field(default_factory=list)
 
+    # Free-text labels for grouping/filtering (e.g. "Line A", "RFID Batch")
+    # -- purely organizational, never affects flashing behaviour. See
+    # app/ui/device_panel.py for the filter/sort UI built on this.
+    tags: list[str] = field(default_factory=list)
+
     # Flash encryption / secure boot provisioning settings for this device
     # (see SecurityConfig above and app/flash_engine/security_manager.py).
     security: SecurityConfig = field(default_factory=SecurityConfig)
@@ -209,6 +214,10 @@ class DeviceConfig:
             custom_flash_args=self.custom_flash_args,
             firmware=[f.duplicate() for f in self.firmware],
         )
+        # A duplicated device is typically another unit on the same bench
+        # line/batch as the original, so its tags are copied too (the user
+        # can always remove/change them afterwards in Device Settings).
+        clone.tags = list(self.tags)
         # Security settings are cloned too (a duplicated device is meant to
         # be an exact template of the original) but the key SOURCE FILES
         # themselves are simply referenced, not copied on disk -- if the
@@ -240,6 +249,7 @@ class DeviceConfig:
             "custom_flash_args": self.custom_flash_args,
             "firmware": [f.to_dict() for f in self.firmware],
             "security": self.security.to_dict(),
+            "tags": list(self.tags),
         }
 
     @staticmethod
@@ -259,6 +269,7 @@ class DeviceConfig:
             stub_loader=data.get("stub_loader", True),
             custom_flash_args=data.get("custom_flash_args", ""),
             firmware=[FirmwareEntry.from_dict(f) for f in data.get("firmware", [])],
+            tags=list(data.get("tags", [])),
         )
         device.security = SecurityConfig.from_dict(data.get("security", {}))
         return device

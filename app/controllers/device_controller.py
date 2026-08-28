@@ -144,7 +144,7 @@ class DeviceController(QObject):
         return {port: names for port, names in usage.items() if len(names) > 1}
 
     def search(self, query: str) -> list[DeviceConfig]:
-        """Filter devices by name / port / chip / current status (case-insensitive)."""
+        """Filter devices by name / port / chip / current status / tag (case-insensitive)."""
         if not query.strip():
             return self.project.devices
         query = query.lower()
@@ -154,4 +154,31 @@ class DeviceController(QObject):
             or query in d.com_port.lower()
             or query in d.chip_type.lower()
             or query in d.runtime.status.lower()
+            or any(query in tag.lower() for tag in d.tags)
         ]
+
+    def all_tags(self) -> list[str]:
+        """Sorted list of every distinct tag currently used by any device."""
+        tags: set[str] = set()
+        for device in self.project.devices:
+            tags.update(device.tags)
+        return sorted(tags, key=str.lower)
+
+    def add_tag_to_devices(self, device_ids: list[str], tag: str) -> int:
+        """Add `tag` to each device in `device_ids` (no duplicates). Returns
+        the number of devices updated. Used by Batch Edit's 'Tags (Add)'
+        field, which appends rather than overwriting like other fields."""
+        tag = tag.strip()
+        if not tag:
+            return 0
+        updated = 0
+        for device_id in device_ids:
+            device = self.get_device(device_id)
+            if device is None:
+                continue
+            if tag not in device.tags:
+                device.tags.append(tag)
+            self.device_updated.emit(device.id)
+            updated += 1
+        logger.info("Batch-added tag '%s' to %d device(s)", tag, updated)
+        return updated
