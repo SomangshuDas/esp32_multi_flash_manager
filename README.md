@@ -14,6 +14,8 @@ implementation for correctness.
 
 **Author:** Somangshu Das — [github.com/SomangshuDas](https://github.com/SomangshuDas)
 
+![ESP32 Multi Flash Manager](docs/images/hero.png)
+
 ![Python](https://img.shields.io/badge/python-3.12%2B-blue)
 ![PySide6](https://img.shields.io/badge/UI-PySide6%20(Qt)-41cd52)
 ![Cross Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
