@@ -20,7 +20,7 @@ binary on Linux.
 
 If you installed the app via one of the installers under `packaging/`
 (`Setup.exe` on Windows, the `.dmg` on macOS, or the `.AppImage` on
-Linux — see §10 for more) you can also just **double-click any `.efmproj`
+Linux — see §10 for more) you can also just **double-click any `.emfm`
 file**: the app launches directly with that project already loaded, no
 manual `File → Open Project` step needed.
 
@@ -356,7 +356,7 @@ Groups & Tags" below for what tags are for.
 
 - **File → New Project** (`Ctrl+N`) starts fresh (asks first if you have
   unsaved changes).
-- **File → Open Project...** (`Ctrl+O`) loads a `.efmproj` file.
+- **File → Open Project...** (`Ctrl+O`) loads a `.emfm` file.
 - **File → Save Project** (`Ctrl+S`) / **Save Project As...**
   (`Ctrl+Shift+S`).
 - **File → Recent Projects** lists your last 10 opened/saved projects.
@@ -371,10 +371,10 @@ relink them.
 
 **Opening a project by double-clicking it.** If the app was installed via
 one of the OS installers built from `packaging/` (rather than run from
-source or a raw portable binary), `.efmproj` files are registered with the
+source or a raw portable binary), `.emfm` files are registered with the
 app:
 
-- **Windows:** double-click a `.efmproj` file in Explorer, or right-click →
+- **Windows:** double-click a `.emfm` file in Explorer, or right-click →
   Open With → ESP32 Multi Flash Manager.
 - **macOS:** double-click it in Finder, or drag it onto the app's Dock icon.
 - **Linux:** works once the AppImage is integrated with your desktop (e.g.

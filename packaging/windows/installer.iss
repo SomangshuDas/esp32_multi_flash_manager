@@ -13,11 +13,15 @@
 ;   - Installs under Program Files (or the per-user equivalent), with a
 ;     Start Menu group (app, uninstall, README, LICENSE, website links) and
 ;     an optional Desktop shortcut.
-;   - Registers the .efmproj extension so double-clicking a project file
+;   - Registers the .emfm extension so double-clicking a project file
 ;     launches the app directly with that project pre-loaded (handled by
-;     _project_path_from_argv() in app/main.py).
-;   - Gives .efmproj files their own icon and a friendly "ESP32 Multi Flash
-;     Manager Project" file type name in Explorer.
+;     _project_path_from_argv() in app/main.py). The older .efmproj
+;     extension is also registered and opens the same way for backward
+;     compatibility -- the app itself then requires a Save As into the
+;     new .emfm format rather than silently resaving in the old one.
+;   - Gives .emfm (and legacy .efmproj) files their own icon and a
+;     friendly "ESP32 Multi Flash Manager Project" file type name in
+;     Explorer.
 ;   - Shows a clean, fully-populated entry in "Apps & features" / Control
 ;     Panel > Programs (name, publisher, version, icon, support/website
 ;     links, estimated size) via Inno Setup's standard Uninstall registry
@@ -53,7 +57,8 @@
 #define AppURL "https://github.com/SomangshuDas/esp32_multi_flash_manager"
 #define AppSupportURL "https://github.com/SomangshuDas/esp32_multi_flash_manager/issues"
 #define AppReleasesURL "https://github.com/SomangshuDas/esp32_multi_flash_manager/releases"
-#define ProjectExt ".efmproj"
+#define ProjectExt ".emfm"
+#define ProjectExtLegacy ".efmproj"
 #define ProgId "ESP32MultiFlashManager.Project"
 
 [Setup]
@@ -105,7 +110,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"
-Name: "associate"; Description: "Open .efmproj project files with {#AppName}"; GroupDescription: "File association:"
+Name: "associate"; Description: "Open .emfm project files with {#AppName}"; GroupDescription: "File association:"
 
 [Files]
 Source: "..\..\dist\ESP32MultiFlashManager.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -123,7 +128,7 @@ Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"; Comment: "Remo
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Registry]
-; File association for .efmproj -> our ProgId, only when the "associate"
+; File association for .emfm -> our ProgId, only when the "associate"
 ; task is checked. Written under HKCU so it needs no elevation beyond what
 ; the installer already has, and is cleanly removed on uninstall — this
 ; also means the association is per-user, matching the per-user/per-machine
@@ -132,10 +137,16 @@ Root: HKCU; Subkey: "Software\Classes\{#ProjectExt}"; ValueType: string; ValueNa
 Root: HKCU; Subkey: "Software\Classes\{#ProgId}"; ValueType: string; ValueName: ""; ValueData: "ESP32 Multi Flash Manager Project"; Flags: uninsdeletekey; Tasks: associate
 Root: HKCU; Subkey: "Software\Classes\{#ProgId}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\app_icon.ico"; Tasks: associate
 Root: HKCU; Subkey: "Software\Classes\{#ProgId}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associate
+; Legacy .efmproj extension -> the SAME ProgId, so double-clicking an old
+; project file still opens the app (which then forces a Save As into the
+; new .emfm format instead of resaving in place -- see
+; ProjectController.open_project's legacy handling).
+Root: HKCU; Subkey: "Software\Classes\{#ProjectExtLegacy}"; ValueType: string; ValueName: ""; ValueData: "{#ProgId}"; Flags: uninsdeletevalue; Tasks: associate
 ; Explorer "new file type" friendliness — shows our icon/name in the
 ; "Open with" picker even before a file has been associated.
 Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""; Tasks: associate
 Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}\SupportedTypes"; ValueType: string; ValueName: "{#ProjectExt}"; ValueData: ""; Tasks: associate
+Root: HKCU; Subkey: "Software\Classes\Applications\{#AppExeName}\SupportedTypes"; ValueType: string; ValueName: "{#ProjectExtLegacy}"; ValueData: ""; Tasks: associate
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
@@ -150,7 +161,7 @@ Type: files; Name: "{app}\install_marker.txt"
 
 [Code]
 { Explorer needs a nudge to notice a new/changed file association right
-  away, otherwise .efmproj icons/behavior won't refresh until next login. }
+  away, otherwise .emfm/.efmproj icons/behavior won't refresh until next login. }
 procedure SHChangeNotify(wEventId: Longint; uFlags: Longint; dwItem1: Longint; dwItem2: Longint);
 external 'SHChangeNotify@shell32.dll stdcall';
 

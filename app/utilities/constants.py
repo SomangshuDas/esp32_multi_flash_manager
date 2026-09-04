@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.10.1"
+APP_VERSION = "0.11.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -129,8 +129,16 @@ FLASH_STALL_TIMEOUT_SECONDS = 45.0
 # --------------------------------------------------------------------------
 # File / project extensions
 # --------------------------------------------------------------------------
-PROJECT_FILE_EXTENSION = "efmproj"
-PROJECT_FILE_FILTER = "ESP32 Multi Flash Manager Project (*.efmproj)"
+PROJECT_FILE_EXTENSION = "emfm"
+PROJECT_FILE_FILTER = "ESP32 Multi Flash Manager Project (*.emfm)"
+# Pre-rename extension. Files saved by releases before the .emfm switch
+# can still be opened (see ProjectController.open_project's legacy
+# handling) so nobody's old projects are stranded, but the Save dialog
+# filter above only ever offers/writes the current .emfm extension --
+# opening a .efmproj file always forces a Save As, never a silent
+# overwrite in the old format.
+PROJECT_FILE_EXTENSION_LEGACY = "efmproj"
+PROJECT_FILE_FILTER_OPEN = "ESP32 Multi Flash Manager Project (*.emfm *.efmproj)"
 FIRMWARE_FILE_FILTER = "Firmware Binary (*.bin)"
 
 # --------------------------------------------------------------------------

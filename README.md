@@ -20,6 +20,8 @@ implementation for correctness.
 ![PySide6](https://img.shields.io/badge/UI-PySide6%20(Qt)-41cd52)
 ![Cross Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
 ![License](https://img.shields.io/badge/license-MIT-green)
+[![Tests](https://github.com/SomangshuDas/esp32_multi_flash_manager/actions/workflows/test.yml/badge.svg)](https://github.com/SomangshuDas/esp32_multi_flash_manager/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/SomangshuDas/esp32_multi_flash_manager/branch/main/graph/badge.svg)](https://codecov.io/gh/SomangshuDas/esp32_multi_flash_manager)
 
 ---
 
@@ -37,7 +39,7 @@ implementation for correctness.
   `ota_data_initial.bin`, `boot_app0.bin`, `firmware.bin`, etc. and assigns
   their standard flash addresses automatically. Unknown `.bin` files are
   still added, with an editable address.
-- **Project files (`.efmproj`).** Save your whole bench configuration —
+- **Project files (`.emfm`).** Save your whole bench configuration —
   every device, every firmware path, every flash setting, and your window
   layout — to a single JSON project file. Reopening a project with missing
   firmware never crashes; missing files are flagged and easy to relink.
@@ -197,7 +199,7 @@ images have been added, each with its flash address, size, and MD5:
 
 ![Firmware tab populated with bootloader, partition table, and app images](docs/images/firmware-tab-populated.png)
 
-Saving the current bench configuration as a reusable `.efmproj` project
+Saving the current bench configuration as a reusable `.emfm` project
 file via **File → Save Project As...**:
 
 ![Save Project As dialog](docs/images/save-project-dialog.png)
@@ -282,7 +284,7 @@ goes.
 | **Parallel/batch flashing** | Unlimited devices, each with its own thread and `esptool` subprocess | `FactoryMultiDownload` mode, documented up to 20 devices per session |
 | **Per-device configuration** | Independent chip type, baud, flash mode/frequency/size, and custom arguments per device, editable anytime | One shared `SPI Flash Config` per session; `Factory` mode locks it by default to prevent accidental changes |
 | **Firmware auto-detection** | Recognizes `bootloader.bin`, `partition-table.bin`, `firmware.bin`, etc. and assigns standard addresses automatically | None — each path and address is entered manually per slot |
-| **Saved project / bench configuration** | `.efmproj` JSON project files (devices, firmware, settings, layout); reopening with missing files flags them for relinking | No project file format; `Factory` mode persists via the tool's own `bin/` folder layout and `.conf` files |
+| **Saved project / bench configuration** | `.emfm` JSON project files (devices, firmware, settings, layout); reopening with missing files flags them for relinking | No project file format; `Factory` mode persists via the tool's own `bin/` folder layout and `.conf` files |
 | **Combining firmware images** | Dedicated Merge Bins dialog with pre-merge validation (missing files, invalid/duplicate/overlapping addresses) before `esptool merge-bin` runs | `CombineBin` button concatenates selected files; no address-overlap validation reported to the user |
 | **Read-back (chip/flash/eFuse)** | Chip Info, Flash ID, eFuse Summary, Security Info, and Read Flash Region, each with both a friendly **Summary** view and the complete raw **Log** | `chipInfoDump` tab covering Chip Info, Read Flash, and Read Efuse, added in tool version 3.9.8; output is raw text or a fixed-name file |
 | **Flash Encryption / Secure Boot** | Per-device **Security** tab; keys generated/imported through `espsecure`; burning is blocked behind an explicit acknowledgement + typed confirmation phrase | Configured by hand-editing `security.conf` INI files per chip; supports Secure Boot v1/v2 and customer-supplied keys |
@@ -345,7 +347,7 @@ Prefer not to run from source? Every
 ships an installer for each OS — built by the scripts in
 [`packaging/`](packaging) — alongside the raw portable binary:
 `Setup.exe` (Windows, via Inno Setup), a `.dmg` (macOS), and a `.AppImage`
-(Linux). Each installer also registers the **`.efmproj` project file
+(Linux). Each installer also registers the **`.emfm` project file
 extension** with the app, so double-clicking a project file opens it
 directly instead of requiring `File → Open Project` first.
 
@@ -359,7 +361,7 @@ directly instead of requiring `File → Open Project` first.
 > [open an issue](https://github.com/SomangshuDas/esp32_multi_flash_manager/issues)
 > or reach out — reports are very welcome.
 
-An example project is included at `examples/example_project.efmproj`,
+An example project is included at `examples/example_project.emfm`,
 referencing dummy firmware in `examples/firmware/` — open it from
 **File → Open Project** to explore the UI immediately. (The dummy `.bin`
 files are placeholders sized like real ESP-IDF output, not real firmware —
@@ -382,7 +384,7 @@ app/
                         pre-upload validation engine + security_manager.py
                         (espsecure/espefuse command builder for flash
                         encryption / secure boot / eFuse reads)
-  project_manager/     .efmproj save/load + recent-projects list
+  project_manager/     .emfm save/load + recent-projects list
   device_manager/      Live serial port scanning (pyserial)
   firmware_manager/    Firmware folder auto-detection + named profiles
   workers/             QThread workers: one FlashWorker per device for true
@@ -398,7 +400,11 @@ resources/
 examples/               Example project + example firmware folder
 docs/                   User manual, developer docs, build instructions
 packaging/               Installer scripts (Windows/.exe, macOS/.dmg,
-                          Linux/.AppImage) + .efmproj file association
+                          Linux/.AppImage) + .emfm file association
+tests/                  pytest suite mirroring app/'s layout (unit,
+                          pytest-qt integration, hypothesis fuzz, and
+                          headless UI tests -- see Continuous Integration
+                          below)
 .github/workflows/      CI: cross-platform build + smoke test on every push,
                           plus installer builds on tagged releases
 ```
@@ -433,12 +439,34 @@ Every push and pull request to `main` is built and smoke-tested on all
 three target platforms by
 [`.github/workflows/build.yml`](.github/workflows/build.yml)
 (`windows-latest`, `macos-latest`, `ubuntu-latest`), producing a
-downloadable PyInstaller build artifact for each OS. Pushing a `v*.*.*`
-tag additionally triggers
+downloadable PyInstaller build artifact for each OS. The full test suite
+(`tests/`) is run headlessly on every push/PR by
+[`.github/workflows/test.yml`](.github/workflows/test.yml), with coverage
+uploaded to Codecov — both checks are required for a pull request to
+merge. Pushing a `v*.*.*` tag additionally triggers
 [`.github/workflows/release.yml`](.github/workflows/release.yml), which
 builds the installers under `packaging/` for all three OSes and attaches
 them to the GitHub Release. See `docs/BUILD_INSTRUCTIONS.md` §5 for
 details.
+
+### Running the tests locally
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+QT_QPA_PLATFORM=offscreen pytest
+```
+
+`requirements-dev.txt` adds `pytest`, `pytest-qt`, `pytest-cov`, and
+`hypothesis` on top of the runtime dependencies. `tests/` mirrors `app/`'s
+layout: plain unit tests for the Qt-free modules (`models/`,
+`flash_engine/`, `firmware_manager/`, `utilities/`, `project_manager/`,
+including hypothesis-based fuzz tests for `.emfm`/`.efmproj` project-file
+parsing), `pytest-qt` integration tests for the controllers, a
+mocked-serial end-to-end test that drives the real flashing pipeline
+against a fake `esptool` subprocess, and headless UI tests (Interface
+Lock, the busy-device guard on Batch Edit/Assign Firmware Set/Firmware
+Profiles, and smoke tests) run under `QT_QPA_PLATFORM=offscreen` — no
+real display or ESP32 hardware required.
 
 ## Contributing
 

@@ -13,12 +13,13 @@
       ESP32 Multi Flash Manager is a desktop tool for flashing firmware to
       many ESP32 boards in parallel, built around esptool. It supports
       per-device configuration, live flashing progress and logs, firmware
-      profiles, reusable projects (.efmproj), flash history, and batch
+      profiles, reusable projects (.emfm), flash history, and batch
       editing of device settings.
     </p>
   </description>
   <launchable type="desktop-id">esp32-multi-flash-manager.desktop</launchable>
   <provides>
+    <mediatype>application/x-emfm</mediatype>
     <mediatype>application/x-efmproj</mediatype>
   </provides>
   <releases>

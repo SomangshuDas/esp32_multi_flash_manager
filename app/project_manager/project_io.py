@@ -1,7 +1,7 @@
 """
 project_io.py
 ==============
-Handles saving and loading .efmproj project files (plain JSON), plus the
+Handles saving and loading .emfm project files (plain JSON), plus the
 "recent projects" list persisted via AppSettings. Designed to never raise
 an uncaught exception into the UI layer — callers get either a valid
 ProjectModel or a ProjectLoadError with a human-readable message.
@@ -39,7 +39,7 @@ def save_project(project: ProjectModel, file_path: str) -> None:
 
 def load_project(file_path: str) -> ProjectModel:
     """
-    Load a .efmproj file. Missing firmware files are NOT treated as fatal —
+    Load a .emfm file. Missing firmware files are NOT treated as fatal —
     the caller (controller) is responsible for validating firmware paths
     afterwards and surfacing warnings; a corrupt/unreadable JSON file *is*
     fatal and raises ProjectLoadError.
@@ -51,7 +51,12 @@ def load_project(file_path: str) -> ProjectModel:
     try:
         with path.open("r", encoding="utf-8") as handle:
             raw = json.load(handle)
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
+        # ValueError covers json.JSONDecodeError as well as
+        # UnicodeDecodeError -- a binary or non-UTF-8 file (e.g. a
+        # corrupted save, or someone pointing "Open Project" at an
+        # unrelated .bin file renamed to .emfm) must be reported the
+        # same friendly way as malformed JSON, never leak a raw traceback.
         logger.exception("Failed to parse project file %s", file_path)
         raise ProjectLoadError(
             f"This project file is corrupted or not valid JSON:\n{exc}"

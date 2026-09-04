@@ -2,7 +2,7 @@
 # build_dmg.sh
 # ============
 # Builds ESP32MultiFlashManager.app (via the spec in this folder, which wires
-# up the .efmproj file association) and packages it into a drag-to-Applications
+# up the .emfm file association) and packages it into a drag-to-Applications
 # .dmg. Run from anywhere; paths are resolved relative to this script.
 #
 # Usage:

@@ -85,7 +85,10 @@ from app.utilities.constants import (
     DEVICE_SORT_OPTIONS,
     DEVICE_SORT_TAG,
     LIVE_LOG_MAX_LINES,
+    PROJECT_FILE_EXTENSION,
+    PROJECT_FILE_EXTENSION_LEGACY,
     PROJECT_FILE_FILTER,
+    PROJECT_FILE_FILTER_OPEN,
     SETTINGS_KEY_AUTOSAVE_INTERVAL,
     SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH,
     SETTINGS_KEY_THEME,
@@ -388,6 +391,7 @@ class MainWindow(QMainWindow):
         self.project_controller.project_saved.connect(self._on_project_saved)
         self.project_controller.missing_firmware_detected.connect(self._on_missing_firmware)
         self.project_controller.load_failed.connect(self._on_load_failed)
+        self.project_controller.legacy_project_loaded.connect(self._on_legacy_project_loaded)
 
         # Port watcher
         self.port_watcher.ports_changed.connect(self._on_ports_changed)
@@ -985,7 +989,7 @@ class MainWindow(QMainWindow):
             return
         if not file_path:
             file_path, _ = QFileDialog.getOpenFileName(
-                self, "Open Project", "", PROJECT_FILE_FILTER,
+                self, "Open Project", "", PROJECT_FILE_FILTER_OPEN,
                 options=QFileDialog.Option.DontUseNativeDialog,
             )
         if not file_path:
@@ -996,7 +1000,7 @@ class MainWindow(QMainWindow):
         """
         Open `file_path` right after the window is constructed, bypassing the
         unsaved-changes prompt (there is nothing to discard yet). Used when the
-        app is launched by double-clicking a .efmproj file — either passed as
+        app is launched by double-clicking a .emfm file — either passed as
         a command-line argument (Windows/Linux file association) or delivered
         via a macOS QFileOpenEvent. Any failure is reported the same way a
         manual File -> Open would report it, never a silent no-op.
@@ -1014,7 +1018,7 @@ class MainWindow(QMainWindow):
         project = self.project_controller.project
         default_stem = safe_filename(project.project_name) if project.project_name else "project"
         file_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Project As", f"{default_stem}.efmproj", PROJECT_FILE_FILTER,
+            self, "Save Project As", f"{default_stem}.{PROJECT_FILE_EXTENSION}", PROJECT_FILE_FILTER,
             options=QFileDialog.Option.DontUseNativeDialog,
         )
         if not file_path:
@@ -1088,6 +1092,22 @@ class MainWindow(QMainWindow):
 
     def _on_load_failed(self, message: str) -> None:
         QMessageBox.critical(self, "Could Not Open Project", message)
+
+    def _on_legacy_project_loaded(self, original_path: str) -> None:
+        """
+        A project opened from an older `.efmproj` file is never silently
+        overwritten in the old format -- ProjectController.open_project()
+        already left current_file_path unset so Save/autosave fall through
+        to Save As; this just tells the user why, right when it matters.
+        """
+        QMessageBox.information(
+            self, "Older Project File Format",
+            f"'{Path(original_path).name}' was saved by an older version of "
+            f"{APP_NAME} (the .{PROJECT_FILE_EXTENSION_LEGACY} format).\n\n"
+            f"It's been opened, but to continue you'll need to save it as a new "
+            f".{PROJECT_FILE_EXTENSION} file — use File → Save Project (or Save "
+            "Project As).",
+        )
 
     def _refresh_recent_menu(self) -> None:
         self.recent_menu.clear()

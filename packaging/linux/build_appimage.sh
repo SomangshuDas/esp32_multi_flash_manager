@@ -3,7 +3,7 @@
 # ==================
 # Builds ESP32MultiFlashManager with PyInstaller, then wraps it into a
 # self-contained, distro-agnostic AppImage that also registers the
-# .efmproj file association (desktop entry + shared-mime-info XML) when the
+# .emfm file association (desktop entry + shared-mime-info XML) when the
 # AppImage is integrated via appimaged/AppImageLauncher, or when the user
 # runs the AppImage's own `--appimage-install`-style integration.
 #
@@ -50,7 +50,7 @@ echo "==> Assembling AppDir (version $VERSION)"
 cp "$BIN_PATH" "$APPDIR/usr/bin/ESP32MultiFlashManager"
 cp "$SCRIPT_DIR/esp32-multi-flash-manager.desktop" "$APPDIR/usr/share/applications/"
 cp "$SCRIPT_DIR/esp32-multi-flash-manager.desktop" "$APPDIR/"
-cp "$SCRIPT_DIR/esp32-multi-flash-manager-efmproj.xml" "$APPDIR/usr/share/mime/packages/"
+cp "$SCRIPT_DIR/esp32-multi-flash-manager-emfm.xml" "$APPDIR/usr/share/mime/packages/"
 sed "s/version=\"1.0.0\"/version=\"$VERSION\"/" \
     "$SCRIPT_DIR/com.somangshudas.esp32multiflashmanager.appdata.xml" \
     > "$APPDIR/usr/share/metainfo/com.somangshudas.esp32multiflashmanager.appdata.xml"
@@ -102,9 +102,9 @@ echo "==> Building AppImage"
 APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$ARCH" "$APPIMAGETOOL" "$APPDIR" "$OUT_PATH"
 
 echo "==> AppImage ready: $OUT_PATH"
-echo "    (.efmproj association registers once the AppImage is integrated"
+echo "    (.emfm association registers once the AppImage is integrated"
 echo "     via appimaged/AppImageLauncher, or after 'xdg-mime install"
-echo "     usr/share/mime/packages/esp32-multi-flash-manager-efmproj.xml'"
+echo "     usr/share/mime/packages/esp32-multi-flash-manager-emfm.xml'"
 echo "     is run manually from inside the AppImage's mounted AppDir.)"
 echo "    To uninstall: delete the .AppImage file, and if you integrated it"
 echo "    with AppImageLauncher, remove it from there too (Right-click the"

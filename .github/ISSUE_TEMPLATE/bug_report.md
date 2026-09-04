@@ -36,5 +36,5 @@ Attach the relevant excerpt from the app's rotating log files (see §8 of
 > public issue.
 
 **Additional context**
-Anything else relevant — a `.efmproj` file (with paths/keys redacted),
+Anything else relevant — a `.emfm` file (with paths/keys redacted),
 firmware layout, chip type, etc.

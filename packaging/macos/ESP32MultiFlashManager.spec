@@ -2,10 +2,13 @@
 # ============================
 # macOS-only PyInstaller spec. Building via this spec (instead of the plain
 # CLI flags in docs/BUILD_INSTRUCTIONS.md) is what makes double-clicking a
-# .efmproj file in Finder, or dragging one onto the Dock icon, launch the
+# .emfm file in Finder, or dragging one onto the Dock icon, launch the
 # app with that project pre-loaded: Info.plist's CFBundleDocumentTypes below
-# is what tells LaunchServices "this app opens .efmproj files", and Qt/main.py
+# is what tells LaunchServices "this app opens .emfm files", and Qt/main.py
 # picks the resulting QFileOpenEvent up on the ESPFlashApplication subclass.
+# The older .efmproj extension is also declared below so double-clicking an
+# old project still opens the app -- it just forces a Save As into the new
+# .emfm format rather than resaving in place.
 #
 # Run from the repo root:
 #   pyinstaller --noconfirm packaging/macos/ESP32MultiFlashManager.spec
@@ -101,17 +104,33 @@ app = BUNDLE(
                 "CFBundleTypeName": "ESP32 Multi Flash Manager Project",
                 "CFBundleTypeRole": "Editor",
                 "LSHandlerRank": "Owner",
+                "LSItemContentTypes": ["com.somangshudas.esp32multiflashmanager.emfm"],
+                "CFBundleTypeIconFile": "app_icon.icns",
+            },
+            {
+                # Pre-rename extension, kept openable for backward
+                # compatibility -- the app itself requires a Save As into
+                # the new .emfm format rather than resaving this one.
+                "CFBundleTypeName": "ESP32 Multi Flash Manager Project (Legacy)",
+                "CFBundleTypeRole": "Editor",
+                "LSHandlerRank": "Owner",
                 "LSItemContentTypes": ["com.somangshudas.esp32multiflashmanager.efmproj"],
                 "CFBundleTypeIconFile": "app_icon.icns",
-            }
+            },
         ],
         "UTExportedTypeDeclarations": [
             {
-                "UTTypeIdentifier": "com.somangshudas.esp32multiflashmanager.efmproj",
+                "UTTypeIdentifier": "com.somangshudas.esp32multiflashmanager.emfm",
                 "UTTypeDescription": "ESP32 Multi Flash Manager Project",
                 "UTTypeConformsTo": ["public.json", "public.data"],
+                "UTTypeTagSpecification": {"public.filename-extension": ["emfm"]},
+            },
+            {
+                "UTTypeIdentifier": "com.somangshudas.esp32multiflashmanager.efmproj",
+                "UTTypeDescription": "ESP32 Multi Flash Manager Project (Legacy)",
+                "UTTypeConformsTo": ["public.json", "public.data"],
                 "UTTypeTagSpecification": {"public.filename-extension": ["efmproj"]},
-            }
+            },
         ],
     },
 )

@@ -197,7 +197,7 @@ sudo usermod -a -G dialout $USER
 Real, tested scripts for this live under [`packaging/`](../packaging) —
 see [`packaging/README.md`](../packaging/README.md) for the full
 breakdown. They wrap the PyInstaller build above into a proper installer
-for each OS, and register the **`.efmproj` project file extension** with
+for each OS, and register the **`.emfm` project file extension** with
 the app in the process, so double-clicking a project file in the file
 manager launches ESP32 Multi Flash Manager directly with that project
 loaded (see `app/main.py::_project_path_from_argv` and
@@ -211,7 +211,7 @@ OS).
   with [Inno Setup 6](https://jrsoftware.org/isinfo.php) into
   `dist/installer/ESP32MultiFlashManagerSetup-<version>.exe` — a Setup.exe
   with Start Menu/Desktop shortcuts, an uninstaller, an opt-out
-  `.efmproj` file association written to `HKCU\Software\Classes`, and a
+  `.emfm` file association written to `HKCU\Software\Classes`, and a
   post-install "View what's new" checkbox that opens the GitHub Releases
   page (there's no bundled changelog file, so this is always the current
   one). It also drops `install_marker.txt` next to the exe so
@@ -227,7 +227,7 @@ OS).
   `.app` via
   [`packaging/macos/ESP32MultiFlashManager.spec`](../packaging/macos/ESP32MultiFlashManager.spec)
   (which declares `CFBundleDocumentTypes`/`UTExportedTypeDeclarations` for
-  `.efmproj` in `Info.plist`), generating `app_icon.icns` first via
+  `.emfm` in `Info.plist`), generating `app_icon.icns` first via
   [`packaging/macos/make_icns.sh`](../packaging/macos/make_icns.sh) if it
   doesn't already exist, then packages a drag-to-Applications
   `dist/installer/ESP32MultiFlashManager-<version>.dmg`.
@@ -240,8 +240,8 @@ OS).
   [`packaging/linux/build_appimage.sh`](../packaging/linux/build_appimage.sh)
   builds the onefile binary, assembles an AppDir with the bundled
   [`.desktop`](../packaging/linux/esp32-multi-flash-manager.desktop) entry
-  (`MimeType=application/x-efmproj;`) and
-  [shared-mime-info XML](../packaging/linux/esp32-multi-flash-manager-efmproj.xml),
+  (`MimeType=application/x-emfm;application/x-efmproj;`) and
+  [shared-mime-info XML](../packaging/linux/esp32-multi-flash-manager-emfm.xml),
   and wraps it into
   `dist/installer/ESP32MultiFlashManager-<version>-<arch>.AppImage` with
   `appimagetool` (downloaded automatically if not already on `PATH`).
@@ -280,7 +280,7 @@ build above (as before), then also runs that OS's `packaging/` script and
 attaches **both** the raw executable/bundle *and* the installer
 (`Setup.exe` / `.dmg` / `.AppImage`) to the GitHub Release, so users who
 just want a portable binary and users who want proper OS integration
-(Start Menu entry, `.efmproj` file association, uninstaller, etc.) both
+(Start Menu entry, `.emfm` file association, uninstaller, etc.) both
 get what they need from the same release.
 
 ## 6. Verifying a build manually

@@ -36,7 +36,7 @@ This document is for engineers extending or maintaining the codebase.
    `FlashWorker.run()` wraps its entire body in a broad `except Exception`
    so a single device's failure can never propagate and kill other
    in-flight workers or the UI thread.
-5. **Everything persists through plain JSON**, not pickle — `.efmproj`
+5. **Everything persists through plain JSON**, not pickle — `.emfm`
    project files and firmware profile files are both readable/diffable/
    editable by hand if needed, which matters a lot in a manufacturing
    environment where configs get checked into version control or emailed
@@ -55,7 +55,7 @@ This document is for engineers extending or maintaining the codebase.
 | `app/controllers/project_controller.py` | New/open/save/save-as, missing-firmware detection on load |
 | `app/flash_engine/esptool_wrapper.py` | `FlashCommandBuilder` (DeviceConfig → argv) + `FlashProcess` (subprocess wrapper) + `parse_progress_line` |
 | `app/flash_engine/validator.py` | Pure, offline pre-upload validation (duplicate/invalid/overlapping addresses, port availability, etc.) → `ValidationReport` |
-| `app/project_manager/project_io.py` | `.efmproj` JSON I/O + recent-projects list (QSettings) |
+| `app/project_manager/project_io.py` | `.emfm` JSON I/O + recent-projects list (QSettings) |
 | `app/device_manager/port_scanner.py` | pyserial wrapper: `list_available_ports()` |
 | `app/firmware_manager/auto_detect.py` | Folder → `list[FirmwareEntry]` with known-address assignment |
 | `app/firmware_manager/profiles.py` | Named, reusable firmware+settings bundles, stored as JSON in app-data |
@@ -416,7 +416,7 @@ changed to hyphenated Click-style verbs in esptool 5.x).
 
 **Model:** `SecurityConfig` (on `DeviceConfig.security`) holds one
 device's flash-encryption/secure-boot settings and is persisted in
-`.efmproj` like every other `DeviceConfig` field.
+`.emfm` like every other `DeviceConfig` field.
 `DeviceRuntimeState.flash_encryption_detected` /
 `.secure_boot_detected` are transient, *not* persisted, `bool | None`
 fields — `None` means "unknown / never read", populated only by an

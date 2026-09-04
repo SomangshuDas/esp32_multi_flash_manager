@@ -28,7 +28,7 @@ before reporting an issue in case it has already been fixed.
 If you believe you've found a security vulnerability in this
 application — for example, something that could let flash-encryption or
 secure-boot key material leak, corrupt a device's eFuses unexpectedly, or
-execute arbitrary code via a crafted project (`.efmproj`) file — please
+execute arbitrary code via a crafted project (`.emfm`) file — please
 **do not open a public GitHub issue**. Instead:
 
 1. Use GitHub's private

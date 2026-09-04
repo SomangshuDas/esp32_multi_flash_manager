@@ -2,7 +2,7 @@
 project_model.py
 =================
 The top-level "project" object: the full set of configured devices plus
-any project-wide metadata. This is what gets serialized to a .efmproj
+any project-wide metadata. This is what gets serialized to a .emfm
 JSON file by project_manager.project_io.
 """
 

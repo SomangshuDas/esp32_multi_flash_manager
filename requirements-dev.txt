@@ -1,0 +1,10 @@
+# Development / testing-only dependencies. Install alongside
+# requirements.txt (`pip install -r requirements.txt -r requirements-dev.txt`)
+# to run the test suite -- these are never needed at runtime by the
+# packaged application itself.
+-r requirements.txt
+
+pytest>=8.0.0
+pytest-qt>=4.4.0
+pytest-cov>=5.0.0
+hypothesis>=6.100.0
