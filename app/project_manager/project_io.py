@@ -9,13 +9,26 @@ ProjectModel or a ProjectLoadError with a human-readable message.
 
 from __future__ import annotations
 
+import getpass
 import json
+import os
+import socket
+from contextlib import suppress
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from app.logging_setup.logger import get_logger
 from app.models.project_model import ProjectModel
 from app.utilities.app_settings import get_settings
-from app.utilities.constants import MAX_RECENT_PROJECTS
+from app.utilities.constants import (
+    AUTOSAVE_RECOVERY_DIRNAME,
+    AUTOSAVE_RECOVERY_FILENAME,
+    MAX_RECENT_PROJECTS,
+    PROJECT_LOCK_FILE_SUFFIX,
+    PROJECT_LOCK_STALE_SECONDS,
+)
+from app.utilities.helpers import get_app_data_dir
 
 logger = get_logger(__name__)
 
@@ -24,12 +37,122 @@ class ProjectLoadError(Exception):
     """Raised when a project file cannot be parsed or is structurally invalid."""
 
 
+class ProjectLockError(Exception):
+    """Raised by acquire_project_lock() when another holder's lock on this
+    project looks active (see ProjectLockInfo)."""
+
+
+def _atomic_write_json(path: Path, data: dict, *, create_parents: bool = False) -> None:
+    """
+    Write `data` as JSON to `path` atomically: serialize to a temp file
+    in the same directory, flush + fsync it, then os.replace() it over
+    the real path (atomic on both POSIX and Windows).
+
+    Previously save_project() wrote directly to the target path with a
+    plain ``path.open("w")`` -- a crash, power loss, or the process being
+    killed partway through that write left a truncated/corrupt .emfm
+    file, discovered only the next time someone tried to open it (with
+    no backup, since the truncated file *is* what got left on disk).
+
+    `create_parents` is off by default for a user-chosen save location
+    (a real Save/Save As dialog only ever offers an existing directory,
+    so a missing parent here means something is actually wrong -- e.g.
+    the folder was deleted/unmounted after the dialog was shown -- and
+    that should surface as an error, not silently create an unrelated
+    directory tree). App-managed locations (settings.json, the autosave
+    recovery slot) pass True since their directory is expected to be
+    created on first use.
+    """
+    if create_parents:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    elif not path.parent.is_dir():
+        raise OSError(f"Directory does not exist: {path.parent}")
+    tmp_path = path.with_name(f".{path.name}.tmp-{os.getpid()}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, ensure_ascii=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, path)
+
+
+# --------------------------------------------------------------------------
+# Firmware path relativization: firmware entries are stored relative to
+# the .emfm file's own directory whenever possible, instead of as an
+# absolute path baked in at save time. An absolute path only ever
+# resolves correctly on the machine (and exact directory layout) it was
+# saved from -- moving/renaming the project folder, or handing the
+# project to a coworker whose checkout lives at a different absolute
+# location, silently broke every firmware reference even though the
+# project file and its firmware were moved/copied together and their
+# *relative* layout to each other never changed.
+#
+# Both helpers are deliberately defensive about `data`'s actual shape:
+# they are also run (via load_project) on arbitrary/untrusted/corrupted
+# JSON before ProjectModel.from_dict ever gets a chance to validate
+# anything, so a "devices"/"firmware" key holding the wrong type (a
+# string, a bool, a list of non-dicts, ...) must be skipped over rather
+# than raising -- ProjectModel.from_dict is what turns that into a
+# clean ProjectLoadError, not this step.
+# --------------------------------------------------------------------------
+def _relativize_firmware_paths(data: dict, base_dir: Path) -> dict:
+    devices = data.get("devices")
+    if not isinstance(devices, list):
+        return data
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        firmware = device.get("firmware")
+        if not isinstance(firmware, list):
+            continue
+        for entry in firmware:
+            if not isinstance(entry, dict):
+                continue
+            file_path = entry.get("file_path")
+            if not file_path or not isinstance(file_path, str):
+                continue
+            abs_path = Path(file_path)
+            if not abs_path.is_absolute():
+                continue  # already relative (e.g. round-tripped without ever being resolved)
+            try:
+                entry["file_path"] = os.path.relpath(abs_path, base_dir)
+            except ValueError:
+                # Different drive on Windows -- no relative path exists;
+                # keep the absolute path as the only option available.
+                pass
+    return data
+
+
+def _absolutize_firmware_paths(data: dict, base_dir: Path) -> dict:
+    devices = data.get("devices")
+    if not isinstance(devices, list):
+        return data
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        firmware = device.get("firmware")
+        if not isinstance(firmware, list):
+            continue
+        for entry in firmware:
+            if not isinstance(entry, dict):
+                continue
+            file_path = entry.get("file_path")
+            if not file_path or not isinstance(file_path, str):
+                continue
+            candidate = Path(file_path)
+            if candidate.is_absolute():
+                continue  # legacy file saved before this fix -- use as-is
+            entry["file_path"] = str((base_dir / candidate).resolve())
+    return data
+
+
 def save_project(project: ProjectModel, file_path: str) -> None:
-    """Serialize `project` to `file_path` as pretty-printed JSON."""
-    path = Path(file_path)
+    """Serialize `project` to `file_path` as pretty-printed JSON,
+    atomically, with firmware paths stored relative to `file_path`'s own
+    directory wherever possible."""
+    path = Path(file_path).resolve()
     try:
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(project.to_dict(), handle, indent=2, ensure_ascii=False)
+        data = _relativize_firmware_paths(project.to_dict(), path.parent)
+        _atomic_write_json(path, data)
         logger.info("Project saved to %s (%d devices)", file_path, len(project.devices))
         add_recent_project(file_path)
     except OSError as exc:
@@ -44,7 +167,7 @@ def load_project(file_path: str) -> ProjectModel:
     afterwards and surfacing warnings; a corrupt/unreadable JSON file *is*
     fatal and raises ProjectLoadError.
     """
-    path = Path(file_path)
+    path = Path(file_path).resolve()
     if not path.is_file():
         raise ProjectLoadError(f"Project file not found:\n{file_path}")
 
@@ -61,6 +184,9 @@ def load_project(file_path: str) -> ProjectModel:
         raise ProjectLoadError(
             f"This project file is corrupted or not valid JSON:\n{exc}"
         ) from exc
+
+    if isinstance(raw, dict):
+        raw = _absolutize_firmware_paths(raw, path.parent)
 
     try:
         project = ProjectModel.from_dict(raw)
@@ -103,3 +229,180 @@ def get_recent_projects() -> list[str]:
 
 def clear_recent_projects() -> None:
     get_settings().setValue("recent_projects", [])
+
+
+# --------------------------------------------------------------------------
+# Advisory cross-process/cross-machine locking for .emfm project files.
+#
+# This is deliberately a *sidecar* lock file (project.emfm.lock next to
+# project.emfm), not a real OS-level file lock (flock()/LockFileEx) --
+# those are unreliable or entirely unsupported on common network
+# filesystems (SMB/NFS), which is exactly the scenario this guards
+# (two people opening the same project off a shared drive). It cannot
+# stop a second process from ignoring it, but it does turn the common
+# "my coworker already has this open" case into a clear warning instead
+# of two independent, silent edits that clobber whichever save happens
+# to land last -- which was previously not detected at all.
+# --------------------------------------------------------------------------
+@dataclass
+class ProjectLockInfo:
+    holder: str  # "user@hostname"
+    pid: int
+    acquired_at: str  # ISO-8601 timestamp
+    lock_path: Path
+
+
+def _lock_path_for(file_path: str) -> Path:
+    return Path(str(file_path) + PROJECT_LOCK_FILE_SUFFIX)
+
+
+def _current_holder() -> str:
+    try:
+        user = getpass.getuser()
+    except Exception:  # noqa: BLE001 - getpass can fail in odd environments (no controlling tty, etc.)
+        user = "unknown"
+    return f"{user}@{socket.gethostname()}"
+
+
+def _pid_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # process exists, just owned by someone else
+    except OSError:
+        return False
+    return True
+
+
+def read_project_lock(file_path: str) -> ProjectLockInfo | None:
+    """Return the current lock sidecar's contents for `file_path`, or
+    None if there isn't one / it can't be read."""
+    lock_path = _lock_path_for(file_path)
+    if not lock_path.is_file():
+        return None
+    try:
+        with lock_path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return ProjectLockInfo(
+            holder=str(data.get("holder", "unknown")),
+            pid=int(data.get("pid", 0)),
+            acquired_at=str(data.get("acquired_at", "")),
+            lock_path=lock_path,
+        )
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _lock_is_stale(info: ProjectLockInfo) -> bool:
+    try:
+        acquired = datetime.fromisoformat(info.acquired_at)
+    except ValueError:
+        return True
+    age_seconds = (datetime.now().astimezone() - acquired).total_seconds()
+    if age_seconds > PROJECT_LOCK_STALE_SECONDS:
+        return True
+    # PIDs are only meaningfully comparable on the same host as the one
+    # that created the lock -- a lock from a different host is left
+    # alone (age is the only staleness signal available for it).
+    if info.holder == _current_holder():
+        return not _pid_is_running(info.pid)
+    return False
+
+
+def acquire_project_lock(file_path: str) -> ProjectLockInfo | None:
+    """
+    Write this process's lock sidecar for `file_path` and return it, or
+    raise ProjectLockError if a non-stale lock held by someone else
+    already exists. Always best-effort: an OSError writing the sidecar
+    (e.g. a read-only share) is logged and swallowed rather than blocking
+    the project from opening over something purely advisory.
+    """
+    existing = read_project_lock(file_path)
+    if existing is not None and existing.holder != _current_holder() and not _lock_is_stale(existing):
+        raise ProjectLockError(
+            f"This project appears to already be open by {existing.holder} "
+            f"(since {existing.acquired_at})."
+        )
+    if existing is not None and existing.pid == os.getpid() and existing.holder == _current_holder():
+        return existing  # already ours (e.g. re-saving to the same path)
+
+    lock_path = _lock_path_for(file_path)
+    info = ProjectLockInfo(
+        holder=_current_holder(), pid=os.getpid(),
+        acquired_at=datetime.now().astimezone().isoformat(), lock_path=lock_path,
+    )
+    try:
+        with lock_path.open("w", encoding="utf-8") as handle:
+            json.dump({"holder": info.holder, "pid": info.pid, "acquired_at": info.acquired_at}, handle)
+    except OSError:
+        logger.warning("Could not write project lock sidecar for %s (continuing without one)", file_path)
+    return info
+
+
+def release_project_lock(file_path: str) -> None:
+    """Remove this process's own lock sidecar for `file_path`, if any.
+    Never removes a lock held by a different process/host."""
+    info = read_project_lock(file_path)
+    if info is not None and info.pid == os.getpid() and info.holder == _current_holder():
+        with suppress(OSError):
+            info.lock_path.unlink()
+
+
+# --------------------------------------------------------------------------
+# Crash-protection auto-save "recovery slot" for brand-new, never-saved
+# projects. See AUTOSAVE_RECOVERY_DIRNAME's docstring in constants.py for
+# why this exists and what it deliberately does NOT do (it never becomes
+# the project's real save location).
+# --------------------------------------------------------------------------
+def _autosave_recovery_path() -> Path:
+    return get_app_data_dir() / AUTOSAVE_RECOVERY_DIRNAME / AUTOSAVE_RECOVERY_FILENAME
+
+
+def save_autosave_recovery(project: ProjectModel) -> None:
+    """Write `project` to the crash-recovery slot. Best-effort/never
+    raises -- a failure here should never interrupt the user's session,
+    it just means the crash-protection safety net didn't get updated
+    this cycle."""
+    try:
+        path = _autosave_recovery_path()
+        data = _relativize_firmware_paths(project.to_dict(), path.parent)
+        _atomic_write_json(path, data, create_parents=True)
+    except OSError:
+        logger.exception("Failed to write autosave recovery slot")
+
+
+def load_autosave_recovery() -> ProjectModel | None:
+    """Return the project sitting in the crash-recovery slot, or None if
+    there isn't one / it can't be read."""
+    path = _autosave_recovery_path()
+    if not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+        if isinstance(raw, dict):
+            raw = _absolutize_firmware_paths(raw, path.parent)
+        project = ProjectModel.from_dict(raw)
+        for device in project.devices:
+            for entry in device.firmware:
+                entry.refresh()
+        return project
+    except (OSError, ValueError, TypeError):
+        logger.exception("Failed to read autosave recovery slot")
+        return None
+
+
+def has_autosave_recovery() -> bool:
+    return _autosave_recovery_path().is_file()
+
+
+def discard_autosave_recovery() -> None:
+    """Delete the crash-recovery slot -- called once its contents have
+    either been recovered into a real project, or the user explicitly
+    declined to recover it."""
+    with suppress(OSError):
+        _autosave_recovery_path().unlink()

@@ -196,6 +196,60 @@ class TestFirmwareValidation:
         assert not any("bootloader" in m or "partition table" in m for m in warnings)
 
 
+class TestBaudRateValidation:
+    def test_zero_baud_is_error(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        device.baud_rate = 0
+        report = validate_devices([device], connected_ports={"COM3"}, monitor_ports=set(), supported_chips=CHIPS)
+        assert any("Invalid baud rate" in m for m in _errors_for(report, "Device"))
+
+    def test_negative_baud_is_error(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        device.baud_rate = -115200
+        report = validate_devices([device], connected_ports={"COM3"}, monitor_ports=set(), supported_chips=CHIPS)
+        assert any("Invalid baud rate" in m for m in _errors_for(report, "Device"))
+
+    def test_absurdly_large_baud_is_error(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        device.baud_rate = 999_999_999
+        report = validate_devices([device], connected_ports={"COM3"}, monitor_ports=set(), supported_chips=CHIPS)
+        assert any("Invalid baud rate" in m for m in _errors_for(report, "Device"))
+
+    def test_standard_baud_has_no_error_or_warning(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        device.baud_rate = 115200
+        report = validate_devices([device], connected_ports={"COM3"}, monitor_ports=set(), supported_chips=CHIPS)
+        assert not _errors_for(report, "Device")
+        assert not any("baud" in m.lower() for m in _warnings_for(report, "Device"))
+
+    def test_nonstandard_baud_is_warning_not_error(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        device.baud_rate = 123456
+        report = validate_devices([device], connected_ports={"COM3"}, monitor_ports=set(), supported_chips=CHIPS)
+        assert not any("Invalid baud rate" in m for m in _errors_for(report, "Device"))
+        assert any("baud" in m.lower() for m in _warnings_for(report, "Device"))
+
+
+class TestCustomFlashArgsValidation:
+    def test_safe_custom_args_produce_no_error(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        device.custom_flash_args = "--no-progress"
+        report = validate_devices([device], connected_ports={"COM3"}, monitor_ports=set(), supported_chips=CHIPS)
+        assert not any("Custom flash arguments" in m for m in _errors_for(report, "Device"))
+
+    def test_blocked_flag_in_custom_args_is_error(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        device.custom_flash_args = "--port /dev/ttyFAKE"
+        report = validate_devices([device], connected_ports={"COM3"}, monitor_ports=set(), supported_chips=CHIPS)
+        assert any("Custom flash arguments" in m for m in _errors_for(report, "Device"))
+
+    def test_empty_custom_args_produce_no_error(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        device.custom_flash_args = ""
+        report = validate_devices([device], connected_ports={"COM3"}, monitor_ports=set(), supported_chips=CHIPS)
+        assert not any("Custom flash arguments" in m for m in _errors_for(report, "Device"))
+
+
 class TestFullyValidDevice:
     def test_clean_device_has_no_errors_or_warnings(self):
         device = _device(firmware=[

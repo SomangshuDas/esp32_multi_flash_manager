@@ -60,12 +60,34 @@ from app.utilities.constants import (
     UNIFIED_KEY_PURPOSE_FLASH_ENCRYPTION,
     UNIFIED_KEY_PURPOSE_SECURE_BOOT_V2,
 )
+from app.utilities.helpers import validate_extra_esptool_args
 
 logger = get_logger(__name__)
 
 # Offline key-gen/signing is fast, local, and CPU-bound -- capped generously
 # the same way bin_merge.py caps its own offline esptool call.
 OFFLINE_TIMEOUT_SECONDS = 60
+
+
+def _custom_efuse_args_tokens(sec) -> list[str]:
+    """
+    Shared by both burn-key command builders below (previously each had
+    its own copy-pasted ``sec.custom_efuse_args.strip().split()`` --
+    consolidated here as the single source of truth). Validates first
+    (see app.utilities.helpers.validate_extra_esptool_args) as a
+    defense-in-depth check on top of validator.py's own pre-upload
+    check, since this is also reachable from a script driving
+    SecurityCommandBuilder directly without going through the UI's
+    pre-upload validation first.
+    """
+    raw = sec.custom_efuse_args.strip()
+    if not raw:
+        return []
+    error = validate_extra_esptool_args(raw)
+    if error:
+        raise ValueError(f"Refusing to build espefuse command: custom eFuse arguments are invalid: {error}")
+    import shlex
+    return shlex.split(raw)
 
 
 def is_legacy_efuse_chip(chip_type: str) -> bool:
@@ -142,8 +164,7 @@ class SecurityCommandBuilder:
                 sec.flash_encryption_key_path,
                 UNIFIED_KEY_PURPOSE_FLASH_ENCRYPTION,
             ]
-        if sec.custom_efuse_args.strip():
-            args += sec.custom_efuse_args.strip().split()
+        args += _custom_efuse_args_tokens(sec)
         return prefix + args
 
     @staticmethod
@@ -172,8 +193,7 @@ class SecurityCommandBuilder:
                 sec.secure_boot_key_path,
                 UNIFIED_KEY_PURPOSE_SECURE_BOOT_V2,
             ]
-        if sec.custom_efuse_args.strip():
-            args += sec.custom_efuse_args.strip().split()
+        args += _custom_efuse_args_tokens(sec)
         return prefix + args
 
     @staticmethod

@@ -16,8 +16,8 @@ from enum import Enum
 from app.device_manager.port_scanner import get_port_device_names
 from app.flash_engine.security_manager import validate_security_settings
 from app.models.device_model import DeviceConfig
-from app.utilities.constants import SUPPORTED_CHIPS, FLASH_MODES
-from app.utilities.helpers import is_valid_hex_address
+from app.utilities.constants import BAUD_RATES, DEFAULT_BAUD, SUPPORTED_CHIPS, FLASH_MODES
+from app.utilities.helpers import is_valid_hex_address, validate_extra_esptool_args
 
 
 class Severity(Enum):
@@ -121,6 +121,51 @@ def _validate_single_device_security(device: DeviceConfig, report: ValidationRep
         else:
             report.add_warning(device.name, issue.message)
 
+    custom_efuse_error = validate_extra_esptool_args(device.security.custom_efuse_args)
+    if custom_efuse_error:
+        report.add_error(device.name, f"Custom eFuse arguments: {custom_efuse_error}")
+
+
+_BAUD_RATE_MIN = 300
+_BAUD_RATE_MAX = 5_000_000
+
+
+def _validate_baud_rate(device: DeviceConfig, report: ValidationReport) -> None:
+    """
+    Baud rate was previously never checked here at all -- a corrupted,
+    zero, or negative value (e.g. from a hand-edited or corrupted project
+    file, or a stray empty edit in the baud rate combo box) only ever
+    surfaced as an opaque esptool failure at flash time instead of a
+    clear pre-upload error naming the actual bad field.
+
+    The baud rate combo box is user-editable (not restricted to
+    BAUD_RATES), so any positive value in a sane range is accepted as
+    valid -- a value outside the standard preset list only gets a
+    WARNING (it may simply be a custom baud a particular board/adapter
+    needs), not an ERROR.
+    """
+    baud = device.baud_rate
+    name = device.name
+    if not isinstance(baud, int) or isinstance(baud, bool) or baud <= 0:
+        report.add_error(name, f"Invalid baud rate: '{baud}'. Must be a positive whole number.")
+        return
+    if baud > _BAUD_RATE_MAX:
+        report.add_error(
+            name, f"Invalid baud rate: {baud}. That is larger than any real serial baud rate (max {_BAUD_RATE_MAX}).",
+        )
+        return
+    if baud < _BAUD_RATE_MIN:
+        report.add_error(
+            name, f"Invalid baud rate: {baud}. That is too low for esptool to communicate reliably (min {_BAUD_RATE_MIN}).",
+        )
+        return
+    if baud not in BAUD_RATES:
+        report.add_warning(
+            name,
+            f"Baud rate {baud} is not one of the standard presets. If the upload fails to "
+            f"connect, try a standard rate such as {DEFAULT_BAUD}.",
+        )
+
 
 def _validate_single_device(
     device: DeviceConfig,
@@ -154,6 +199,12 @@ def _validate_single_device(
 
     if device.flash_mode not in FLASH_MODES:
         report.add_error(name, f"Invalid flash mode: '{device.flash_mode}'.")
+
+    _validate_baud_rate(device, report)
+
+    custom_args_error = validate_extra_esptool_args(device.custom_flash_args)
+    if custom_args_error:
+        report.add_error(name, f"Custom flash arguments: {custom_args_error}")
 
     enabled = device.enabled_firmware()
     if not enabled:

@@ -36,12 +36,15 @@ from app.utilities.constants import PROVISION_CONFIRM_PHRASE
 
 class ProvisionConfirmDialog(QDialog):
     """Returns True from confirm_burn(...) only if the user both checked
-    the acknowledgement box AND typed the exact confirmation phrase."""
+    the acknowledgement box AND typed the exact confirmation phrase (and,
+    when `show_backup_reminder` is set, also checked the key-backup
+    acknowledgement)."""
 
-    def __init__(self, summary_lines: list[str], parent=None) -> None:
+    def __init__(self, summary_lines: list[str], parent=None, *, show_backup_reminder: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle("Confirm Irreversible eFuse Operation")
         self.setMinimumWidth(480)
+        self._show_backup_reminder = show_backup_reminder
 
         layout = QVBoxLayout(self)
 
@@ -68,6 +71,29 @@ class ProvisionConfirmDialog(QDialog):
         self.ack_checkbox.toggled.connect(self._update_ok_enabled)
         layout.addWidget(self.ack_checkbox)
 
+        self.backup_ack_checkbox = None
+        if show_backup_reminder:
+            # A key with key_source == "generate" only exists as this one
+            # local file (plus, optionally, an OS-keychain copy -- see
+            # SecurityConfig.store_keys_in_os_keychain) until the user
+            # backs it up themselves. If it's lost after the eFuse burn
+            # below, the device is permanently locked out of any future
+            # re-flash/re-provisioning with a *different* key -- this
+            # reminder exists so that's a deliberate, acknowledged risk
+            # rather than a surprise discovered after the fact.
+            backup_note = QLabel(
+                "<b>Before burning:</b> the generated key file is the ONLY copy of this key. "
+                "Losing it after burning means this device can never be re-flashed with a "
+                "different key. Back it up to a safe, separate location now."
+            )
+            backup_note.setWordWrap(True)
+            backup_note.setStyleSheet("margin-top: 10px; color: #e8590c;")
+            layout.addWidget(backup_note)
+
+            self.backup_ack_checkbox = QCheckBox("I have backed up the generated key file(s) to a safe location.")
+            self.backup_ack_checkbox.toggled.connect(self._update_ok_enabled)
+            layout.addWidget(self.backup_ack_checkbox)
+
         phrase_label = QLabel(f"Type <b>{PROVISION_CONFIRM_PHRASE}</b> below to confirm:")
         phrase_label.setStyleSheet("margin-top: 8px;")
         layout.addWidget(phrase_label)
@@ -88,11 +114,13 @@ class ProvisionConfirmDialog(QDialog):
 
     def _update_ok_enabled(self, *_args) -> None:
         ready = self.ack_checkbox.isChecked() and self.phrase_edit.text().strip() == PROVISION_CONFIRM_PHRASE
+        if self.backup_ack_checkbox is not None:
+            ready = ready and self.backup_ack_checkbox.isChecked()
         self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(ready)
 
 
-def confirm_irreversible_burn(parent, summary_lines: list[str]) -> bool:
+def confirm_irreversible_burn(parent, summary_lines: list[str], *, show_backup_reminder: bool = False) -> bool:
     """Convenience wrapper: show the dialog and return whether the user
-    completed both confirmation steps and accepted."""
-    dialog = ProvisionConfirmDialog(summary_lines, parent)
+    completed every required confirmation step and accepted."""
+    dialog = ProvisionConfirmDialog(summary_lines, parent, show_backup_reminder=show_backup_reminder)
     return dialog.exec() == QDialog.DialogCode.Accepted

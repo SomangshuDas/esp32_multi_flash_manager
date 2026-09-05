@@ -101,7 +101,10 @@ class ProvisionDialog(QDialog):
                 f"{self._device.com_port} ({self._device.chip_type})"
             )
 
-        if not confirm_irreversible_burn(self, summary_lines):
+        if not confirm_irreversible_burn(
+            self, summary_lines,
+            show_backup_reminder=sec.key_source == "generate" and bool(summary_lines),
+        ):
             return
 
         self.start_button.setEnabled(False)

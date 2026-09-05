@@ -18,7 +18,13 @@ This document is for engineers extending or maintaining the codebase.
    `app/flash_engine/esptool_wrapper.py`. `FlashProcess` drains the
    subprocess's stdout on its own background thread into a queue rather
    than iterating it directly from the QThread, so `FlashWorker` can poll
-   with a timeout (`FLASH_STALL_TIMEOUT_SECONDS`, currently 45s) instead
+   with a timeout (`FLASH_STALL_TIMEOUT_SECONDS`, 45s by default and
+   user-configurable via `Settings → General → Flash Stall Timeout`,
+   resolved once on the main thread at worker-construction time — see
+   `app.utilities.app_settings.get_flash_stall_timeout_seconds` — rather
+   than read from inside the worker thread itself, since this app's
+   settings loader touches `os.environ` on first use and doing that from
+   a background `QThread` can race with the main thread) instead
    of blocking forever — a device that disconnects mid-write can leave
    the OS serial driver parked in an uninterruptible I/O wait that
    esptool has no timeout for, and without this the worker's QThread
@@ -273,9 +279,13 @@ rewriting settings out from under a running `FlashWorker`. Saving the
 project itself is never restricted by any of this.
 
 **Interface Lock has two independent modes, grouped under `Tools → Lock
-Interface`**, both gated behind the same key (hashed with
-`hashlib.sha256` under `AppSettings`' `SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH`,
-set via `Tools → Set Interface Lock Key...`):
+Interface`**, both gated behind the same key (hashed with salted,
+stretched PBKDF2-HMAC-SHA256 — see `app/utilities/key_hashing.py` —
+under `AppSettings`' `SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH`, set via
+`Tools → Set Interface Lock Key...`; a key hash set by a pre-0.12.0
+release, still in the old unsalted single-round `hashlib.sha256` format,
+is verified transparently and silently upgraded to the new format the
+next time it's used successfully):
 
 - **Settings Lock** (`Tools → Lock Interface → Settings Lock`,
   `MainWindow._on_toggle_factory_lock` /

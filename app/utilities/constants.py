@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.11.0"
+APP_VERSION = "0.12.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -126,6 +126,24 @@ ACTIVE_STATUSES = {
 # --------------------------------------------------------------------------
 FLASH_STALL_TIMEOUT_SECONDS = 45.0
 
+# settings.json key letting the user tune FLASH_STALL_TIMEOUT_SECONDS from
+# Settings -> General without editing source code / rebuilding (see
+# app/ui/settings_dialog.py). The constant above remains the documented
+# factory default and the fallback used by app.utilities.app_settings.
+# get_flash_stall_timeout_seconds() whenever nothing has been customized.
+SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS = "flash_stall_timeout_seconds"
+FLASH_STALL_TIMEOUT_MIN_SECONDS = 10.0
+FLASH_STALL_TIMEOUT_MAX_SECONDS = 600.0
+
+# Same idea as FLASH_STALL_TIMEOUT_SECONDS above but for the read-only
+# eFuse-burning/provisioning subprocess (app/workers/security_worker.py) --
+# kept as its own named constant (rather than reusing
+# FLASH_STALL_TIMEOUT_SECONDS) because burning/reading eFuses is a
+# different operation with a different expected duration, even though the
+# current default happens to be a round number too. Previously this was a
+# bare literal (60.0) hardcoded directly in security_worker.py.
+PROVISION_STALL_TIMEOUT_SECONDS = 60.0
+
 # --------------------------------------------------------------------------
 # File / project extensions
 # --------------------------------------------------------------------------
@@ -137,9 +155,40 @@ PROJECT_FILE_FILTER = "ESP32 Multi Flash Manager Project (*.emfm)"
 # filter above only ever offers/writes the current .emfm extension --
 # opening a .efmproj file always forces a Save As, never a silent
 # overwrite in the old format.
+#
+# Legacy (.efmproj) compatibility notice: this fallback-read support may be
+# discontinued in a future major release. Projects opened in this format
+# are never silently re-saved in it (see ProjectController.open_project) --
+# Save/Save As always writes the current .emfm format instead.
 PROJECT_FILE_EXTENSION_LEGACY = "efmproj"
 PROJECT_FILE_FILTER_OPEN = "ESP32 Multi Flash Manager Project (*.emfm *.efmproj)"
 FIRMWARE_FILE_FILTER = "Firmware Binary (*.bin)"
+FIRMWARE_PROFILE_FILE_FILTER = "Firmware Profile (*.json)"
+
+# --------------------------------------------------------------------------
+# Crash-protection auto-save "recovery slot" for brand-new, never-saved
+# projects (app/controllers/project_controller.py,
+# app/project_manager/project_io.py). A project that has never been saved
+# to disk has no real destination for auto-save to write to, but leaving
+# it completely unprotected until the user's first manual Save means a
+# crash/power-loss before that point loses everything -- this recovery
+# slot exists purely so periodic auto-save has *somewhere* safe to put a
+# copy in that window. It is never treated as the project's real save
+# location: saving here does not set current_file_path or clear the
+# dirty flag, and the file is deleted as soon as either a real Save
+# succeeds or the recovered project is intentionally discarded.
+# --------------------------------------------------------------------------
+AUTOSAVE_RECOVERY_DIRNAME = "autosave_recovery"
+AUTOSAVE_RECOVERY_FILENAME = "unsaved_project_recovery.emfm"
+
+# --------------------------------------------------------------------------
+# Advisory cross-process/cross-machine lock sidecar for .emfm project files
+# (app/project_manager/project_io.py). Guards against two people/instances
+# editing the same project on a shared network drive and silently
+# clobbering each other's work -- see project_io.acquire_project_lock().
+# --------------------------------------------------------------------------
+PROJECT_LOCK_FILE_SUFFIX = ".lock"
+PROJECT_LOCK_STALE_SECONDS = 24 * 60 * 60  # a lock this old is assumed abandoned
 
 # --------------------------------------------------------------------------
 # Internal flag used to re-invoke this same executable as an esptool runner.

@@ -58,7 +58,8 @@ implementation for correctness.
   and can be exported for QA/traceability records.
 - **Firmware Profiles.** Save a device's firmware list + flash settings as
   a named, reusable profile (e.g. "ESP32 RFID Reader") and apply it to any
-  device in one click.
+  device in one click, or Export/Import a profile as a shareable file to
+  hand off to another operator/bench.
 - **Device templates / cloning.** Duplicate a fully-configured device
   instantly.
 - **Batch editing.** Change one setting (baud rate, flash mode, erase

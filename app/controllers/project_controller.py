@@ -23,7 +23,18 @@ from PySide6.QtCore import QObject, Signal
 from app.logging_setup.logger import get_logger
 from app.models.firmware_model import FirmwareEntry
 from app.models.project_model import ProjectModel
-from app.project_manager.project_io import ProjectLoadError, load_project, save_project
+from app.project_manager.project_io import (
+    ProjectLoadError,
+    ProjectLockError,
+    acquire_project_lock,
+    discard_autosave_recovery,
+    has_autosave_recovery,
+    load_autosave_recovery,
+    load_project,
+    release_project_lock,
+    save_autosave_recovery,
+    save_project,
+)
 from app.utilities.constants import PROJECT_FILE_EXTENSION_LEGACY
 
 logger = get_logger(__name__)
@@ -40,6 +51,11 @@ class ProjectController(QObject):
     legacy_project_loaded(str)              - opened file's original (.efmproj) path;
                                                current_file_path is left unset so the
                                                next save forces a Save As in .emfm
+    project_lock_warning(str)               - another holder appears to already have
+                                               this project open (advisory only --
+                                               the project still opens/loads normally)
+    schema_version_warning(str)             - the loaded file's schema_version is
+                                               newer than this build's own APP_VERSION
     """
 
     project_loaded = Signal(object)
@@ -47,6 +63,8 @@ class ProjectController(QObject):
     missing_firmware_detected = Signal(list)
     load_failed = Signal(str)
     legacy_project_loaded = Signal(str)
+    project_lock_warning = Signal(str)
+    schema_version_warning = Signal(str)
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -56,6 +74,7 @@ class ProjectController(QObject):
 
     # ------------------------------------------------------------------
     def new_project(self) -> None:
+        self._release_current_lock()
         self.project = ProjectModel()
         self.current_file_path = None
         self.dirty = False
@@ -66,6 +85,10 @@ class ProjectController(QObject):
     def _is_legacy_project_file(file_path: str) -> bool:
         return Path(file_path).suffix.lstrip(".").lower() == PROJECT_FILE_EXTENSION_LEGACY
 
+    def _release_current_lock(self) -> None:
+        if self.current_file_path:
+            release_project_lock(self.current_file_path)
+
     def open_project(self, file_path: str) -> bool:
         try:
             project = load_project(file_path)
@@ -73,6 +96,8 @@ class ProjectController(QObject):
             logger.error("Project load failed: %s", exc)
             self.load_failed.emit(str(exc))
             return False
+
+        self._release_current_lock()
 
         is_legacy = self._is_legacy_project_file(file_path)
         self.project = project
@@ -89,6 +114,18 @@ class ProjectController(QObject):
         if is_legacy:
             logger.info("Opened legacy .%s project %s -- Save As required", PROJECT_FILE_EXTENSION_LEGACY, file_path)
             self.legacy_project_loaded.emit(file_path)
+        else:
+            # Advisory only: a locked-by-someone-else project still opens
+            # normally (this may be a stale lock from a crash, or the user
+            # may legitimately want a read-only look) -- it's surfaced as
+            # a warning the caller can show, not a hard block.
+            try:
+                acquire_project_lock(file_path)
+            except ProjectLockError as exc:
+                self.project_lock_warning.emit(str(exc))
+
+        if project.schema_warning:
+            self.schema_version_warning.emit(project.schema_warning)
 
         missing = self._collect_missing_firmware(project)
         if missing:
@@ -105,13 +142,76 @@ class ProjectController(QObject):
         except ProjectLoadError as exc:
             self.load_failed.emit(str(exc))
             return False
+        if target != self.current_file_path:
+            self._release_current_lock()
+            try:
+                acquire_project_lock(target)
+            except ProjectLockError as exc:
+                # Someone else already holds a lock on this exact target
+                # path (Save As onto a project someone else has open) --
+                # surfaced the same way as the open_project case, still
+                # non-blocking since the save itself already succeeded.
+                self.project_lock_warning.emit(str(exc))
         self.current_file_path = target
         self.dirty = False
+        # A real save always supersedes whatever was sitting in the
+        # crash-recovery slot for this session.
+        discard_autosave_recovery()
         self.project_saved.emit(target)
         return True
 
+    def autosave(self) -> None:
+        """
+        Periodic autosave tick (see MainWindow._on_autosave_timeout).
+
+        Previously this only ever did anything when current_file_path was
+        already set -- a brand-new, never-saved project had no
+        destination to autosave to and was silently left completely
+        unprotected until the user's first manual Save, so a crash/power
+        loss before that point lost the whole session with nothing to
+        recover. Routes to the crash-recovery slot instead in that case
+        (see project_io.save_autosave_recovery) -- never treated as a
+        real save (current_file_path/dirty are untouched), purely a
+        safety net.
+        """
+        if self.current_file_path:
+            self.save_project(self.current_file_path)
+        elif self.dirty:
+            save_autosave_recovery(self.project)
+
     def mark_dirty(self) -> None:
         self.dirty = True
+
+    def release_lock(self) -> None:
+        """Release this session's project lock (see project_io's
+        advisory-locking module docstring). Call on app shutdown."""
+        self._release_current_lock()
+
+    @staticmethod
+    def has_recoverable_autosave() -> bool:
+        return has_autosave_recovery()
+
+    def recover_autosaved_project(self) -> bool:
+        """
+        Load the crash-recovery slot as the current (still-unsaved)
+        project, if one exists. Returns True if a project was recovered.
+        Does not delete the recovery slot itself -- that only happens
+        once the user either does a real Save (see save_project above)
+        or explicitly discards it (see discard_recovered_autosave).
+        """
+        recovered = load_autosave_recovery()
+        if recovered is None:
+            return False
+        self.project = recovered
+        self.current_file_path = None
+        self.dirty = True
+        self.project_loaded.emit(self.project)
+        logger.info("Recovered project from crash-protection autosave slot")
+        return True
+
+    @staticmethod
+    def discard_recovered_autosave() -> None:
+        discard_autosave_recovery()
 
     @staticmethod
     def _collect_missing_firmware(project: ProjectModel) -> list[FirmwareEntry]:

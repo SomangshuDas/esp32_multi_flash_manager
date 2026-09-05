@@ -94,16 +94,65 @@ class UpdateInfo:
         return self.asset_url or self.page_url
 
 
-def _parse_version(version: str) -> tuple[int, ...]:
+def _parse_version(version: str) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """
+    Parse a version string into a sortable key that correctly orders
+    pre-release tags *below* their corresponding plain release, e.g.
+    "1.2.3-rc1" < "1.2.3".
+
+    Naively extracting every digit group via regex (the previous
+    implementation) parsed "v1.2.3-rc1" as (1, 2, 3, 1) -- which sorts as
+    *newer* than the plain "1.2.3" release (1, 2, 3), the opposite of
+    correct semver-ish ordering. This splits the numeric release core
+    from any "-suffix" first, so a pre-release suffix only ever makes a
+    version compare as *lower* than the same numeric core with no
+    suffix, never higher.
+
+    Returns (release_tuple, prerelease_tuple):
+      - release_tuple is the dotted numeric core (e.g. (1, 2, 3)).
+      - prerelease_tuple is empty for a plain release (which is *newer*
+        than any pre-release of the same core, matching semver's rule),
+        or the pre-release suffix's own digit groups for a tagged build
+        (e.g. "-rc1" -> (1,), "-beta2" -> (2,)) so "rc1" < "rc2" also
+        sorts correctly among pre-releases of the same core version.
+    """
     cleaned = version.strip().lstrip("vV")
-    parts = re.findall(r"\d+", cleaned)
-    return tuple(int(p) for p in parts) or (0,)
+    # Split off the first "-" or "+" delimited suffix (pre-release /
+    # build metadata), matching common tag shapes like "1.2.3-rc1",
+    # "1.2.3-beta.2", "1.2.3+build5".
+    core, sep, suffix = re.match(r"^([^\-+]*)([\-+]?)(.*)$", cleaned).groups()
+
+    release_parts = re.findall(r"\d+", core)
+    release_tuple = tuple(int(p) for p in release_parts) or (0,)
+
+    if not sep:
+        # No suffix at all -- a plain release, ranks above any
+        # pre-release of the same numeric core.
+        return (release_tuple, ())
+
+    prerelease_parts = re.findall(r"\d+", suffix)
+    prerelease_tuple = tuple(int(p) for p in prerelease_parts) or (0,)
+    return (release_tuple, prerelease_tuple)
+
+
+def _version_sort_key(version: str) -> tuple:
+    """Turn _parse_version's (release, prerelease) pair into a single key
+    where a plain release always outranks a pre-release of the same
+    release_tuple, and an absent prerelease_tuple (plain release) sorts
+    after any non-empty one."""
+    release_tuple, prerelease_tuple = _parse_version(version)
+    is_plain_release = not prerelease_tuple
+    # (release, "is this a plain release?", prerelease numbers) -- False <
+    # True, so a plain release (is_plain_release=True) always outranks a
+    # pre-release (False) sharing the same release_tuple.
+    return (release_tuple, is_plain_release, prerelease_tuple)
 
 
 def is_newer(remote_version: str, local_version: str = APP_VERSION) -> bool:
-    """True if `remote_version` (e.g. 'v0.11.0' or '0.11.0') is strictly
-    newer than `local_version`, comparing numeric release components."""
-    return _parse_version(remote_version) > _parse_version(local_version)
+    """True if `remote_version` (e.g. 'v0.11.0', '0.11.0', or a pre-release
+    tag like '0.11.0-rc1') is strictly newer than `local_version`,
+    correctly ranking pre-release tags below their plain release."""
+    return _version_sort_key(remote_version) > _version_sort_key(local_version)
 
 
 def _pick_asset(assets: list[dict], prefer_portable: bool) -> tuple[str | None, str | None]:

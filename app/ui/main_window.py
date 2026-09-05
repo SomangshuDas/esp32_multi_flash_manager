@@ -22,7 +22,6 @@ wiring + user interaction.
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QUrl, QTimer
@@ -106,6 +105,7 @@ from app.utilities.constants import (
     USER_MANUAL_URL,
 )
 from app.utilities.helpers import resource_path, safe_filename
+from app.utilities.key_hashing import hash_lock_key, is_legacy_hash_format, verify_lock_key
 from app.utilities.shortcuts import get_shortcuts, save_shortcuts
 from app.utilities.sound_player import play_event_sound
 from app.utilities.update_checker import check_for_update
@@ -267,7 +267,12 @@ class MainWindow(QMainWindow):
         self._factory_lock_actions.extend([batch_edit_action, profiles_action, assign_firmware_action])
 
         # ---- Flash menu ----
-        flash_menu = menu_bar.addMenu("&Flash")
+        # "Fl&ash" (accelerator "A"), not "&Flash" -- "&F" was already
+        # claimed by the File menu, so both menu bar entries shared the
+        # same Alt+F mnemonic and Alt+F could only ever reach whichever
+        # one Qt happened to pick first, leaving the other unreachable by
+        # keyboard.
+        flash_menu = menu_bar.addMenu("Fl&ash")
         self._add_action(flash_menu, "Upload Selected", "", self._on_upload_selected, action_id="upload_selected")
         self._add_action(flash_menu, "Upload All", "", self._on_upload_all, action_id="upload_all")
         self._add_action(flash_menu, "Cancel Selected", "", self._on_cancel_selected)
@@ -392,6 +397,8 @@ class MainWindow(QMainWindow):
         self.project_controller.missing_firmware_detected.connect(self._on_missing_firmware)
         self.project_controller.load_failed.connect(self._on_load_failed)
         self.project_controller.legacy_project_loaded.connect(self._on_legacy_project_loaded)
+        self.project_controller.project_lock_warning.connect(self._on_project_lock_warning)
+        self.project_controller.schema_version_warning.connect(self._on_schema_version_warning)
 
         # Port watcher
         self.port_watcher.ports_changed.connect(self._on_ports_changed)
@@ -678,7 +685,24 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     @staticmethod
     def _hash_lock_key(key: str) -> str:
-        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+        return hash_lock_key(key)
+
+    def _verify_lock_key(self, key: str) -> bool:
+        """
+        Check `key` against the stored Interface Lock hash, and -- if it
+        matches AND the stored hash is still in the old unsalted
+        single-round SHA-256 format from before this fix -- silently
+        re-hash and re-store it in the new salted/stretched format (see
+        app.utilities.key_hashing) so a key set on an older release gets
+        upgraded the next time it's successfully used, without ever
+        forcing the user to re-enter/reset it.
+        """
+        stored_hash = self.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH)
+        if not key or not verify_lock_key(key, stored_hash):
+            return False
+        if is_legacy_hash_format(stored_hash):
+            self.settings.setValue(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH, hash_lock_key(key))
+        return True
 
     def _on_set_lock_key(self) -> bool:
         """Prompt for a new unlock key (entered twice) and store its hash.
@@ -728,7 +752,6 @@ class MainWindow(QMainWindow):
             key, ok = QInputDialog.getText(
                 self, "Unlock Settings", "Unlock key:", QLineEdit.EchoMode.Password,
             )
-            stored_hash = self.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH)
             if not ok:
                 # User cancelled the prompt -- stay locked, keep the
                 # checkbox reflecting reality instead of silently unlocking.
@@ -736,7 +759,7 @@ class MainWindow(QMainWindow):
                 self.factory_lock_action.setChecked(True)
                 self.factory_lock_action.blockSignals(False)
                 return
-            if not key or self._hash_lock_key(key) != stored_hash:
+            if not self._verify_lock_key(key):
                 QMessageBox.warning(self, "Unlock Settings", "Incorrect key.")
                 self.factory_lock_action.blockSignals(True)
                 self.factory_lock_action.setChecked(True)
@@ -800,8 +823,7 @@ class MainWindow(QMainWindow):
         return titles
 
     def _on_unlock_attempt(self, entered_key: str) -> None:
-        stored_hash = self.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH)
-        if not entered_key or self._hash_lock_key(entered_key) != stored_hash:
+        if not self._verify_lock_key(entered_key):
             self.lock_overlay.show_error()
             return
 
@@ -1109,6 +1131,16 @@ class MainWindow(QMainWindow):
             "Project As).",
         )
 
+    def _on_project_lock_warning(self, message: str) -> None:
+        """Another holder (advisory, best-effort -- see project_io's
+        locking docstring) appears to already have this project open."""
+        QMessageBox.warning(self, "Project May Already Be Open", message)
+
+    def _on_schema_version_warning(self, message: str) -> None:
+        """The loaded file's schema_version is newer than this build's
+        own APP_VERSION -- see ProjectModel.from_dict."""
+        QMessageBox.information(self, "Newer Project File", message)
+
     def _refresh_recent_menu(self) -> None:
         self.recent_menu.clear()
         recents = get_recent_projects()
@@ -1304,19 +1336,32 @@ class MainWindow(QMainWindow):
 
     def _on_autosave_timeout(self) -> None:
         """
-        Silently save the current project if it has unsaved changes AND has
-        already been saved to disk at least once. A brand-new project that
-        has never been saved (current_file_path is None) is always skipped
-        -- there is no destination to write to, and picking one on the
-        user's behalf without asking would be surprising mid-session.
+        Silently protect the current project's unsaved changes.
+
+        A project that has already been saved at least once
+        (current_file_path is set) is re-saved in place, same as before.
+        A brand-new project that has never been saved is now ALSO
+        protected -- routed to a separate crash-recovery slot (see
+        ProjectController.autosave / project_io.save_autosave_recovery)
+        instead of being silently skipped. Previously a crash or power
+        loss before the user's first manual Save lost the entire session
+        with nothing to recover, since there was no destination to
+        autosave to and this handler just returned early. The recovery
+        slot is never the project's real save location and is never
+        offered as a substitute for actually choosing where to save --
+        it exists purely so there is *something* to recover from a crash.
         """
-        if self.project_controller.current_file_path is None:
-            return
         if not self.project_controller.dirty:
             return
         if self.lock_overlay.isVisible():
             # Don't touch anything while Full Lock is up.
             return
+
+        if self.project_controller.current_file_path is None:
+            self.project_controller.autosave()
+            self.statusBar().showMessage("Unsaved project protected against crashes.", 3000)
+            return
+
         if self.project_controller.save_project():
             logger.info("Auto-saved project to %s", self.project_controller.current_file_path)
             self.statusBar().showMessage("Auto-saved.", 3000)
@@ -1447,6 +1492,30 @@ class MainWindow(QMainWindow):
         else:
             self.showMaximized()
 
+        self._offer_autosave_recovery_if_present()
+
+    def _offer_autosave_recovery_if_present(self) -> None:
+        """
+        If a previous session left something in the crash-recovery
+        autosave slot (see ProjectController.autosave), ask whether to
+        recover it. This is the other half of the fix for a brand-new,
+        never-saved project having no crash protection at all: the
+        recovery slot existing is only useful if something actually
+        offers to load it back.
+        """
+        if not self.project_controller.has_recoverable_autosave():
+            return
+        choice = QMessageBox.question(
+            self, "Recover Unsaved Project",
+            "It looks like the app closed unexpectedly with an unsaved project open.\n\n"
+            "Would you like to recover it?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if choice == QMessageBox.StandardButton.Yes:
+            self.project_controller.recover_autosaved_project()
+        else:
+            self.project_controller.discard_recovered_autosave()
+
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override
         if self.lock_overlay.isVisible():
             # Refuse to close while locked -- otherwise Alt+F4 / the
@@ -1472,6 +1541,7 @@ class MainWindow(QMainWindow):
 
         self.settings.setValue("window_geometry", self.saveGeometry())
         self.settings.setValue("window_state", self.saveState())
+        self.project_controller.release_lock()
         for console in self._live_consoles.values():
             console.close()
         for monitor in list(self._serial_monitors.values()):

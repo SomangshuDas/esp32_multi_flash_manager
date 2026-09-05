@@ -26,6 +26,7 @@ from app.flash_engine.esptool_wrapper import FlashCommandBuilder, FlashProcess
 from app.flash_engine.security_manager import SecurityCommandBuilder
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
+from app.utilities.app_settings import get_flash_stall_timeout_seconds
 from app.utilities.constants import (
     READ_MODE_CHIP_INFO,
     READ_MODE_EFUSE_SUMMARY,
@@ -33,6 +34,7 @@ from app.utilities.constants import (
     READ_MODE_READ_FLASH,
     READ_MODE_SECURITY_INFO,
 )
+from app.utilities.helpers import propagate_trace_hook
 
 logger = get_logger(__name__)
 
@@ -80,6 +82,8 @@ class ReadWorker(QThread):
         read_size: str = "",
         output_path: str = "",
         parent=None,
+        *,
+        stall_timeout: float | None = None,
     ) -> None:
         super().__init__(parent)
         self.device = device
@@ -89,6 +93,17 @@ class ReadWorker(QThread):
         self.output_path = output_path
         self._process: FlashProcess | None = None
         self._cancel_requested = False
+        # Resolved on the MAIN thread if not given explicitly -- never
+        # read from inside run()/_run_impl() itself. See the matching
+        # comment on FlashWorker.__init__ in flash_worker.py for why:
+        # this app's settings loader touches os.environ the first time
+        # it's ever called in the process, and doing that from a
+        # background QThread at the same moment the main thread mutates
+        # env vars (as this app's own test suite does between tests) can
+        # abort the whole process.
+        self._stall_timeout = (
+            stall_timeout if stall_timeout is not None else get_flash_stall_timeout_seconds()
+        )
 
     def request_cancel(self) -> None:
         self._cancel_requested = True
@@ -96,7 +111,14 @@ class ReadWorker(QThread):
             self._process.terminate()
 
     def run(self) -> None:
+        # See helpers.propagate_trace_hook: QThread bypasses threading, so
+        # coverage's tracer never auto-attaches without this.
+        propagate_trace_hook()
+        self._run_impl()
+
+    def _run_impl(self) -> None:
         start_time = time.monotonic()
+        stall_timeout = self._stall_timeout
         try:
             command = build_read_command(
                 self.device, self.mode,
@@ -121,13 +143,13 @@ class ReadWorker(QThread):
             self.finished_read.emit(False, f"Unexpected error: {exc}", "")
             return
 
-        for line in self._process.iter_lines(stall_timeout=45.0):
+        for line in self._process.iter_lines(stall_timeout=stall_timeout):
             if self._cancel_requested:
                 self._process.terminate()
                 self.finished_read.emit(False, "Cancelled by user.", self.output_path)
                 return
             if line is None:
-                self.log_line.emit(">>> No response for 45s -- the device appears unresponsive. Aborting.")
+                self.log_line.emit(f">>> No response for {int(stall_timeout)}s -- the device appears unresponsive. Aborting.")
                 self._process.terminate()
                 self.finished_read.emit(
                     False,

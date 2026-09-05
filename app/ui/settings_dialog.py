@@ -14,7 +14,7 @@ from __future__ import annotations
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTabWidget,
     QVBoxLayout, QWidget,
 )
@@ -36,9 +36,13 @@ from app.utilities.constants import (
     DEFAULT_SOUNDS_ENABLED,
     DEFAULT_THEME,
     FLASH_MODES,
+    FLASH_STALL_TIMEOUT_MAX_SECONDS,
+    FLASH_STALL_TIMEOUT_MIN_SECONDS,
+    FLASH_STALL_TIMEOUT_SECONDS,
     MERGE_POST_ACTION_LABELS,
     MERGE_POST_ACTIONS,
     SETTINGS_KEY_AUTOSAVE_INTERVAL,
+    SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS,
     SETTINGS_KEY_MERGE_DEFAULT_FILENAME,
     SETTINGS_KEY_MERGE_DEFAULT_LOCATION,
     SETTINGS_KEY_MERGE_POST_ACTION,
@@ -99,6 +103,19 @@ class SettingsDialog(QDialog):
         self.flash_mode_combo.setCurrentText(self.settings.value("default_flash_mode", DEFAULT_FLASH_MODE))
         form.addRow("Default Flash Mode:", self.flash_mode_combo)
 
+        self.stall_timeout_spin = QDoubleSpinBox()
+        self.stall_timeout_spin.setDecimals(0)
+        self.stall_timeout_spin.setRange(FLASH_STALL_TIMEOUT_MIN_SECONDS, FLASH_STALL_TIMEOUT_MAX_SECONDS)
+        self.stall_timeout_spin.setSuffix(" s")
+        self.stall_timeout_spin.setToolTip(
+            "How long a flash or read operation can go with no output from esptool before "
+            "it's treated as an unresponsive/disconnected device and aborted."
+        )
+        self.stall_timeout_spin.setValue(
+            float(self.settings.value(SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS, FLASH_STALL_TIMEOUT_SECONDS))
+        )
+        form.addRow("Flash Stall Timeout:", self.stall_timeout_spin)
+
         # ---- Auto-Save ----
         self.autosave_combo = QComboBox()
         for minutes in AUTOSAVE_INTERVAL_OPTIONS:
@@ -108,7 +125,8 @@ class SettingsDialog(QDialog):
         self.autosave_combo.setCurrentIndex(autosave_index if autosave_index >= 0 else 0)
         form.addRow("Auto-Save:", self.autosave_combo)
         autosave_note = QLabel(
-            "New projects that have not been saved to disk yet are never auto-saved."
+            "New projects that have not been saved to disk yet are protected in a separate "
+            "crash-recovery slot, offered back to you next time the app starts."
         )
         autosave_note.setWordWrap(True)
         autosave_note.setStyleSheet("color: #8a8f98; font-size: 11px;")
@@ -223,6 +241,7 @@ class SettingsDialog(QDialog):
         self.settings.setValue(SETTINGS_KEY_THEME, self.theme_combo.currentData())
         self.settings.setValue("default_baud", int(self.baud_combo.currentText()))
         self.settings.setValue("default_flash_mode", self.flash_mode_combo.currentText())
+        self.settings.setValue(SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS, self.stall_timeout_spin.value())
         self.settings.setValue(SETTINGS_KEY_AUTOSAVE_INTERVAL, int(self.autosave_combo.currentData()))
         self.settings.setValue(SETTINGS_KEY_MERGE_DEFAULT_FILENAME, self.merge_filename_edit.text().strip() or DEFAULT_MERGED_BIN_FILENAME)
         self.settings.setValue(SETTINGS_KEY_MERGE_DEFAULT_LOCATION, self.merge_location_edit.text().strip())

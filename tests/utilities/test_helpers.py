@@ -225,3 +225,71 @@ class TestResourcePath:
     def test_no_extra_parts_returns_resources_root(self):
         result = helpers.resource_path()
         assert result.name == "resources"
+
+
+class TestTimestampNow:
+    def test_includes_utc_offset(self):
+        ts = helpers.timestamp_now()
+        # e.g. "2026-09-04 14:23:01+0530" or "...+0000" -- always ends
+        # with a signed 4-digit offset, no colon.
+        assert ts[-5] in "+-"
+        assert ts[-4:].isdigit()
+
+    def test_splits_into_date_and_time_parts(self):
+        ts = helpers.timestamp_now()
+        parts = ts.split(" ")
+        assert len(parts) == 2
+        date_part, time_part = parts
+        assert len(date_part.split("-")) == 3
+        assert len(time_part.split(":")) == 3  # HH:MM:SS+offset -- offset has no colon
+
+
+class TestValidateExtraEsptoolArgs:
+    def test_empty_string_is_valid(self):
+        assert helpers.validate_extra_esptool_args("") is None
+        assert helpers.validate_extra_esptool_args("   ") is None
+
+    def test_simple_flag_is_valid(self):
+        assert helpers.validate_extra_esptool_args("--no-progress") is None
+
+    def test_flag_with_value_is_valid(self):
+        assert helpers.validate_extra_esptool_args("--flash_freq 40m") is None
+
+    def test_unbalanced_quotes_is_invalid(self):
+        assert helpers.validate_extra_esptool_args('--foo "bar') is not None
+
+    def test_too_long_is_invalid(self):
+        assert helpers.validate_extra_esptool_args("-x " * 300) is not None
+
+    @pytest.mark.parametrize("token", ["--port", "-p", "--chip", "write_flash", "erase_flash", "burn-key"])
+    def test_blocked_tokens_are_invalid(self, token):
+        assert helpers.validate_extra_esptool_args(token) is not None
+
+    def test_path_like_bare_token_is_invalid(self):
+        assert helpers.validate_extra_esptool_args("../../etc/passwd") is not None
+
+    def test_bare_keyword_value_is_valid(self):
+        assert helpers.validate_extra_esptool_args("--flash_mode dio") is None
+
+
+class TestPropagateTraceHook:
+    def test_noop_when_nothing_tracing(self, monkeypatch):
+        import sys
+        import threading
+
+        monkeypatch.delattr(threading, "_trace_hook", raising=False)
+        calls = []
+        monkeypatch.setattr(sys, "settrace", lambda hook: calls.append(hook))
+        helpers.propagate_trace_hook()
+        assert calls == []
+
+    def test_calls_settrace_with_hook_when_tracing(self, monkeypatch):
+        import sys
+        import threading
+
+        sentinel = object()
+        monkeypatch.setattr(threading, "_trace_hook", sentinel, raising=False)
+        calls = []
+        monkeypatch.setattr(sys, "settrace", lambda hook: calls.append(hook))
+        helpers.propagate_trace_hook()
+        assert calls == [sentinel]

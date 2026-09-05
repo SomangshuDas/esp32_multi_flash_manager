@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import queue
 import re
+import shlex
 import subprocess
 import sys
 import threading
@@ -34,6 +35,7 @@ from typing import Iterator
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
 from app.utilities.constants import ESPEFUSE_REEXEC_FLAG, ESPSECURE_REEXEC_FLAG, ESPTOOL_REEXEC_FLAG
+from app.utilities.helpers import validate_extra_esptool_args
 
 logger = get_logger(__name__)
 
@@ -205,8 +207,19 @@ class FlashCommandBuilder:
             args += ["--encrypt"]
 
         if device.custom_flash_args.strip():
-            # Allow power users to append raw extra arguments (e.g. --no-progress)
-            args += device.custom_flash_args.strip().split()
+            # Allow power users to append raw extra arguments (e.g. --no-progress).
+            # validate_extra_esptool_args() is also run pre-upload by
+            # validator.py (so the user sees a clear error before anything
+            # runs) -- this is a second, defense-in-depth check right at
+            # the point the argv is actually assembled, since a project
+            # file can be hand-edited or come from a shared/untrusted
+            # source without ever passing through the pre-upload
+            # validator first (e.g. a script driving this module
+            # directly).
+            error = validate_extra_esptool_args(device.custom_flash_args)
+            if error:
+                raise ValueError(f"Refusing to build flash command: custom flash arguments are invalid: {error}")
+            args += shlex.split(device.custom_flash_args.strip())
 
         for entry in device.enabled_firmware():
             args += [entry.address, entry.file_path]

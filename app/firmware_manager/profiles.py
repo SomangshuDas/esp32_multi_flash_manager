@@ -12,6 +12,7 @@ be shared between operators by copying files.
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -111,10 +112,22 @@ def list_profiles() -> list[FirmwareProfile]:
     return profiles
 
 
+def _atomic_write_json(file_path: Path, data: dict[str, Any]) -> None:
+    """Write `data` as JSON to `file_path` atomically (temp file +
+    os.replace), so a crash/power-loss mid-write can never leave a
+    truncated/corrupt profile file behind."""
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = file_path.with_name(f".{file_path.name}.tmp-{os.getpid()}")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, ensure_ascii=False)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, file_path)
+
+
 def save_profile(profile: FirmwareProfile) -> None:
     file_path = _profiles_dir() / f"{safe_filename(profile.name)}.json"
-    with file_path.open("w", encoding="utf-8") as handle:
-        json.dump(profile.to_dict(), handle, indent=2, ensure_ascii=False)
+    _atomic_write_json(file_path, profile.to_dict())
     logger.info("Saved firmware profile '%s' to %s", profile.name, file_path)
 
 
@@ -123,3 +136,40 @@ def delete_profile(name: str) -> None:
     if file_path.exists():
         file_path.unlink()
         logger.info("Deleted firmware profile '%s'", name)
+
+
+def export_profile_to_file(profile: FirmwareProfile, dest_path: str | Path) -> None:
+    """
+    Save `profile` to an arbitrary user-chosen path (e.g. a USB drive or
+    shared network folder) instead of the app-data profiles directory.
+
+    Previously the only way to share a profile between operators/benches
+    was to manually locate and copy the underlying file out of the
+    per-user app-data profiles folder -- this is the explicit "Export..."
+    counterpart wired into ProfileDialog (see app/ui/profile_dialog.py).
+    """
+    dest_path = Path(dest_path)
+    _atomic_write_json(dest_path, profile.to_dict())
+    logger.info("Exported firmware profile '%s' to %s", profile.name, dest_path)
+
+
+def import_profile_from_file(src_path: str | Path) -> FirmwareProfile:
+    """
+    Load a FirmwareProfile from an arbitrary file (as written by
+    export_profile_to_file, on this machine or another one) WITHOUT
+    installing it into the app-data profiles directory -- the caller
+    (ProfileDialog) decides whether/how to save it after previewing it,
+    mirroring the "Import..." counterpart to export_profile_to_file
+    above.
+
+    Raises the same exceptions list_profiles() would silently log and
+    skip (OSError, json.JSONDecodeError) -- unlike loading the profiles
+    directory's own files at startup, a failure here is a single
+    explicit user action and should surface as a clear error dialog
+    rather than being swallowed.
+    """
+    with Path(src_path).open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError(f"{src_path} does not contain a valid firmware profile.")
+    return FirmwareProfile.from_dict(data)

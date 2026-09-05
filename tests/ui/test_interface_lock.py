@@ -110,6 +110,61 @@ class TestSettingsLockBlocksDocumentedActions:
         assert window.factory_lock_action.isChecked() is True
 
 
+class TestLegacyKeyHashUpgrade:
+    """
+    The Interface Lock key hash used to be a single unsalted SHA-256
+    round -- verify_lock_key still accepts that old format, and a
+    successful verification against it silently upgrades the stored
+    hash to the new salted/stretched format so a key set on an older
+    release keeps working without ever forcing a reset.
+    """
+
+    def test_legacy_hash_still_unlocks(self, main_window, monkeypatch):
+        import hashlib
+
+        from app.utilities.constants import SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH
+
+        window = main_window
+        legacy_hash = hashlib.sha256(b"old-style-key").hexdigest()
+        window.settings.setValue(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH, legacy_hash)
+        window._set_factory_mode_locked(True)
+        monkeypatch.setattr(
+            "app.ui.main_window.QInputDialog.getText", lambda *a, **k: ("old-style-key", True),
+        )
+        window._on_toggle_factory_lock(False)
+        assert window._factory_mode_locked is False
+
+    def test_successful_legacy_verify_upgrades_stored_hash(self, main_window):
+        import hashlib
+
+        from app.utilities.constants import SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH
+        from app.utilities.key_hashing import is_legacy_hash_format
+
+        window = main_window
+        legacy_hash = hashlib.sha256(b"old-style-key").hexdigest()
+        window.settings.setValue(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH, legacy_hash)
+
+        assert window._verify_lock_key("old-style-key") is True
+
+        upgraded = window.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH)
+        assert upgraded != legacy_hash
+        assert is_legacy_hash_format(upgraded) is False
+        # And the upgraded hash still verifies the same key correctly.
+        assert window._verify_lock_key("old-style-key") is True
+
+    def test_failed_legacy_verify_does_not_upgrade_stored_hash(self, main_window):
+        import hashlib
+
+        from app.utilities.constants import SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH
+
+        window = main_window
+        legacy_hash = hashlib.sha256(b"old-style-key").hexdigest()
+        window.settings.setValue(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH, legacy_hash)
+
+        assert window._verify_lock_key("wrong-key") is False
+        assert window.settings.value(SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH) == legacy_hash
+
+
 class TestFullLockBlocksEverything:
     def test_full_lock_disables_menu_bar_and_central_widget(self, main_window, monkeypatch):
         window = main_window

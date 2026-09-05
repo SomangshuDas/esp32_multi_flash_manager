@@ -437,9 +437,11 @@ weeks later.
   open), or explicit **Dark**/**Light**.
 - Default baud rate and default flash mode for new devices.
 - **Auto-Save** — Disabled, or every 1/2/5/10 (default)/15/30 minutes. A
-  brand-new project that hasn't been saved to disk yet is never
-  auto-saved (there's nowhere to write it to yet) — save it once manually
-  first. See §22.
+  brand-new project that hasn't been saved to disk yet is protected in a
+  separate crash-recovery slot instead of a real save — see §22.
+- **Flash Stall Timeout** — how long (in seconds) a flash or read
+  operation can go with no output before it's treated as an
+  unresponsive/disconnected device and aborted (default 45s).
 - **Bin Merge defaults** — default merged filename, default output
   location (leave blank to always use the same folder as `firmware.bin`),
   and the default **Post-Merge Action** pre-selected in the Merge Bins
@@ -581,11 +583,15 @@ project file like any other device setting.
 project on an interval you choose: Disabled, or every 1, 2, 5, 10
 (default), 15, or 30 minutes.
 
-Two things it deliberately will NOT do:
-- **Auto-save a brand-new, never-saved project.** If you haven't run
-  **File → Save Project** at least once, there's no file path to write
-  to yet — the app won't pick one for you behind your back. Save once
-  manually to "activate" auto-save for that project.
+Two things worth knowing:
+- **A brand-new, never-saved project is protected too, just not the same
+  way.** If you haven't run **File → Save Project** yet, there's no file
+  path to write the real project to — instead, auto-save writes to a
+  separate crash-recovery slot. This is never a substitute for actually
+  saving: it doesn't appear in Recent Projects and isn't the file your
+  work ends up in, it just means a crash or power loss won't lose
+  everything. Next time you start the app after an unexpected close,
+  you'll be asked whether to recover it.
 - **Auto-save when there's nothing new to save.** If the project hasn't
   changed since the last save (manual or automatic), each timer tick is a
   silent no-op.

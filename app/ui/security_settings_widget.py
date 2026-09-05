@@ -169,6 +169,16 @@ class SecuritySettingsWidget(QWidget):
         self.custom_efuse_args_edit = QLineEdit()
         self.custom_efuse_args_edit.setPlaceholderText("e.g. --force-write-always")
         adv_form.addRow("Custom eFuse Arguments:", self.custom_efuse_args_edit)
+        self.store_in_keychain_check = QCheckBox(
+            "Also store generated keys in this computer's OS keychain (if available)"
+        )
+        self.store_in_keychain_check.setToolTip(
+            "In addition to the key file on disk, copy a freshly-generated key into this "
+            "OS's secure credential storage (Windows Credential Locker / macOS Keychain / "
+            "Secret Service on Linux). Best-effort -- has no effect on a system with no "
+            "working keychain backend."
+        )
+        adv_form.addRow(self.store_in_keychain_check)
         layout.addWidget(adv_group)
 
         # ---------------- Provision action ----------------
@@ -209,6 +219,7 @@ class SecuritySettingsWidget(QWidget):
         self.sb_key_block_edit.editingFinished.connect(self._commit)
         self.keep_readable_check.toggled.connect(self._commit)
         self.custom_efuse_args_edit.editingFinished.connect(self._commit)
+        self.store_in_keychain_check.toggled.connect(self._commit)
 
     # ------------------------------------------------------------------
     def _browse_fe_key(self) -> None:
@@ -264,6 +275,7 @@ class SecuritySettingsWidget(QWidget):
 
         self.keep_readable_check.setChecked(sec.keep_key_readable)
         self.custom_efuse_args_edit.setText(sec.custom_efuse_args)
+        self.store_in_keychain_check.setChecked(sec.store_keys_in_os_keychain)
 
         legacy = device is not None and is_legacy_efuse_chip(device.chip_type)
         self.fe_key_block_edit.setEnabled(enabled and not legacy)
@@ -275,6 +287,7 @@ class SecuritySettingsWidget(QWidget):
             self.sb_enable_check, self.sb_version_combo, self.sb_scheme_combo,
             self.sb_key_source_combo, self.sb_key_path_edit,
             self.keep_readable_check, self.custom_efuse_args_edit,
+            self.store_in_keychain_check,
             self.validate_button,
         ):
             widget.setEnabled(enabled)
@@ -324,6 +337,7 @@ class SecuritySettingsWidget(QWidget):
 
         sec.keep_key_readable = self.keep_readable_check.isChecked()
         sec.custom_efuse_args = self.custom_efuse_args_edit.text()
+        sec.store_keys_in_os_keychain = self.store_in_keychain_check.isChecked()
 
         self.provision_button.setEnabled(
             not self._locked and not self._factory_locked

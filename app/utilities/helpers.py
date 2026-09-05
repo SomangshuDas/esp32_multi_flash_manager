@@ -11,7 +11,9 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import sys
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -80,8 +82,84 @@ def file_exists(path: str | None) -> bool:
 
 
 def timestamp_now() -> str:
-    """Return the current timestamp formatted for logs and history entries."""
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    """
+    Return the current timestamp formatted for logs and history entries,
+    as local time with an explicit UTC offset (e.g.
+    "2026-09-04 14:23:01+0530").
+
+    A UTC offset is included specifically so that flash-history CSV
+    exports aggregated from machines in different time zones/sites can be
+    reliably correlated and sorted -- a bare naive local timestamp (the
+    previous behaviour) is ambiguous once entries from more than one time
+    zone are mixed together. Still splits cleanly into (date_part,
+    time_part) via `.split(" ", 1)` exactly like before, since the offset
+    has no embedded space.
+    """
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S%z")
+
+
+def validate_extra_esptool_args(raw: str) -> str | None:
+    """
+    Validate a power-user "custom arguments" passthrough string (e.g.
+    DeviceConfig.custom_flash_args / SecurityConfig.custom_efuse_args)
+    before it is ever appended to a real esptool/espsecure/espefuse
+    subprocess argv.
+
+    These fields exist so advanced users can pass flags this app doesn't
+    have dedicated UI for, but a shared or untrusted .emfm/project file
+    could otherwise smuggle arbitrary extra flags/positional arguments
+    into the real command line run against real hardware (e.g. pointing
+    an output/keyfile flag at an arbitrary path, or appending an entirely
+    different subcommand). This performs a conservative allowlist-style
+    sanity check -- NOT a full CLI grammar parser -- and returns a short
+    human-readable error string if the value looks unsafe, or None if it
+    passes.
+
+    Returns None (valid) for an empty/blank string.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+
+    if len(text) > 500:
+        return "Custom arguments are too long (500 character limit)."
+
+    try:
+        tokens = shlex.split(text)
+    except ValueError as exc:
+        return f"Could not parse custom arguments (unbalanced quotes?): {exc}"
+
+    if not tokens:
+        return None
+
+    # Subcommands/flags that would let a "just pass extra flags" field
+    # silently replace or extend WHAT operation actually runs, rather than
+    # just how it runs -- e.g. sneaking in a second write/erase/burn
+    # command, or overriding the port/chip this app already set explicitly
+    # a few tokens earlier in the real argv. Matched case-insensitively
+    # since esptool accepts some of these in more than one casing.
+    _BLOCKED_TOKENS = {
+        "write_flash", "write-flash", "erase_flash", "erase-flash",
+        "erase_region", "erase-region", "write_flash_status",
+        "burn-key", "burn-key-digest", "burn-efuse", "burn_efuse",
+        "burn-bit", "burn_bit", "burn-block-data", "burn_block_data",
+        "--port", "-p", "--chip", "-c", "--before", "--after",
+    }
+    for token in tokens:
+        lowered = token.lower()
+        if lowered in _BLOCKED_TOKENS:
+            return f"Argument '{token}' is not allowed in custom arguments (already controlled by this app)."
+        if token.startswith("-"):
+            continue
+        # A bare (non-flag) token is only ever a *value* for the flag that
+        # precedes it in valid esptool usage -- never a bare path. Reject
+        # anything that looks like it is trying to reference a filesystem
+        # path (potential path traversal / arbitrary file access) since a
+        # legitimate custom flag value here is expected to be a short
+        # keyword/number (e.g. a flash mode, a block name, an integer).
+        if "/" in token or "\\" in token or ".." in token:
+            return f"Argument '{token}' looks like a file path, which is not allowed in custom arguments."
+    return None
 
 
 def safe_filename(name: str) -> str:
@@ -139,3 +217,22 @@ def resource_path(*parts: str) -> Path:
         # app/utilities/helpers.py -> app/utilities -> app -> project root
         base = Path(__file__).resolve().parent.parent.parent
     return base.joinpath("resources", *parts)
+
+
+def propagate_trace_hook() -> None:
+    """Re-arm coverage/profiler tracing on the calling thread.
+
+    QThread (used by FlashWorker/ReadWorker/ProvisionWorker) spawns a
+    genuine OS thread on the C++ side via QThread.start(), bypassing
+    Python's ``threading`` module entirely -- so coverage.py's tracer,
+    which only auto-attaches inside ``threading.Thread._bootstrap_inner``,
+    never sees it. Call this as the very first line of ``run()``, then
+    immediately delegate to a separate method (e.g. ``_run_impl()``):
+    ``sys.settrace`` only traces frames created *after* it is called, so
+    the body of ``run()`` itself would stay untraced otherwise.
+
+    A no-op when nothing is tracing (e.g. not running under coverage).
+    """
+    hook = getattr(threading, "_trace_hook", None)
+    if hook is not None:
+        sys.settrace(hook)

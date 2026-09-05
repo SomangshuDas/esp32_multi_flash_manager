@@ -21,13 +21,21 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import threading
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QByteArray
 
 from app.logging_setup.logger import get_logger
+from app.utilities.constants import (
+    FLASH_STALL_TIMEOUT_MAX_SECONDS,
+    FLASH_STALL_TIMEOUT_MIN_SECONDS,
+    FLASH_STALL_TIMEOUT_SECONDS,
+    SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS,
+)
 from app.utilities.helpers import get_app_data_dir
 
 logger = get_logger(__name__)
@@ -72,12 +80,28 @@ class AppSettings:
             return {}
 
     def _save(self) -> None:
+        """
+        Write settings.json atomically: serialize to a temp file in the
+        same directory, flush+fsync it, then os.replace() it over the
+        real path. os.replace is atomic on both POSIX and Windows, so a
+        crash/power-loss/kill mid-write can never leave settings.json
+        half-written/truncated (the previous direct
+        ``self._path.open("w")`` could -- corrupting every persisted
+        preference including the recent-projects list and window
+        geometry, discovered only on the next launch).
+        """
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._path.open("w", encoding="utf-8") as handle:
+            tmp_path = self._path.with_name(f".{self._path.name}.tmp-{os.getpid()}")
+            with tmp_path.open("w", encoding="utf-8") as handle:
                 json.dump(self._data, handle, indent=2, ensure_ascii=False)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_path, self._path)
         except OSError:
             logger.exception("Failed to write %s", self._path)
+            with suppress(OSError):
+                tmp_path.unlink(missing_ok=True)
 
     def value(self, key: str, default: Any = None, type: type | None = None) -> Any:
         with self._lock:
@@ -115,3 +139,32 @@ def get_settings() -> AppSettings:
         if _instance is None:
             _instance = AppSettings()
         return _instance
+
+
+def get_flash_stall_timeout_seconds() -> float:
+    """
+    Return the configured stall-detection timeout (in seconds) used by
+    both FlashWorker and ReadWorker to decide a device has stopped
+    responding (see Settings -> General -> "Flash stall timeout").
+
+    Previously FLASH_STALL_TIMEOUT_SECONDS was a hardcoded constant with
+    no way to change it without editing source and rebuilding -- some
+    boards/USB-serial adapters/OS combinations legitimately need a
+    longer grace period (e.g. a slow erase of a large external flash
+    chip) than others need for a *shorter* one (faster failure feedback
+    on a bench with many devices). Falls back to the
+    FLASH_STALL_TIMEOUT_SECONDS default, and clamps to
+    [FLASH_STALL_TIMEOUT_MIN_SECONDS, FLASH_STALL_TIMEOUT_MAX_SECONDS] so
+    a corrupted/hand-edited settings.json value can't produce a
+    nonsensical (zero, negative, or absurdly long) timeout.
+    """
+    settings = get_settings()
+    try:
+        value = float(
+            settings.value(SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS, FLASH_STALL_TIMEOUT_SECONDS)
+        )
+    except (TypeError, ValueError):
+        return FLASH_STALL_TIMEOUT_SECONDS
+    if value != value:  # NaN guard (NaN != NaN)
+        return FLASH_STALL_TIMEOUT_SECONDS
+    return max(FLASH_STALL_TIMEOUT_MIN_SECONDS, min(FLASH_STALL_TIMEOUT_MAX_SECONDS, value))

@@ -54,6 +54,7 @@ if _ESPTOOL_REEXEC_FLAG in sys.argv or _ESPSECURE_REEXEC_FLAG in sys.argv or _ES
 
 from PySide6.QtCore import QEvent, QLockFile
 from PySide6.QtGui import QIcon
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from app.logging_setup.logger import configure_logging, get_logger
@@ -194,6 +195,63 @@ def _acquire_single_instance_lock() -> QLockFile | None:
     return None
 
 
+# Local-socket channel a blocked second launch uses to ask the already-
+# running instance to come to the front (see _start_focus_server /
+# _try_focus_running_instance below). A fixed name is fine -- exactly one
+# instance is ever allowed to hold it, enforced by the single-instance
+# lock above.
+_FOCUS_SERVER_NAME = "ESP32MultiFlashManager-focus-v1"
+
+
+def _start_focus_server(window: MainWindow) -> QLocalServer:
+    """
+    Start listening for "please come to the front" pings from a second
+    launch that got turned away by the single-instance lock (see
+    _try_focus_running_instance). Call once, from the instance that
+    actually won the lock, right after its MainWindow is created.
+
+    Previously a blocked second launch only ever showed a warning dialog
+    and exited -- leaving the user to go hunt for the already-running
+    window themselves (which may be minimized, on another virtual
+    desktop, or simply behind other windows) instead of it just being
+    brought to the front automatically.
+    """
+    # Clean up a stale registration from a previous run that crashed
+    # without closing its socket (harmless no-op if there wasn't one).
+    QLocalServer.removeServer(_FOCUS_SERVER_NAME)
+    server = QLocalServer()
+    server.listen(_FOCUS_SERVER_NAME)
+
+    def _on_new_connection() -> None:
+        socket = server.nextPendingConnection()
+        if socket is not None:
+            socket.disconnectFromServer()
+        if window.isMinimized():
+            window.showNormal()
+        window.raise_()
+        window.activateWindow()
+
+    server.newConnection.connect(_on_new_connection)
+    return server
+
+
+def _try_focus_running_instance(timeout_ms: int = 300) -> bool:
+    """
+    Ping the already-running instance's focus server (see
+    _start_focus_server) so its window comes to the front instead of
+    this blocked second launch just silently/confusingly doing nothing
+    useful. Returns True if a running instance was reachable and
+    acknowledged the connection (i.e. focusing it should have worked);
+    False if nothing answered within `timeout_ms`, in which case the
+    caller falls back to the old "already running" warning dialog.
+    """
+    socket = QLocalSocket()
+    socket.connectToServer(_FOCUS_SERVER_NAME)
+    reached = socket.waitForConnected(timeout_ms)
+    socket.disconnectFromServer()
+    return reached
+
+
 def main() -> int:
     log_dir = configure_logging(debug="--debug" in sys.argv)
     logger.info("Starting %s", APP_NAME)
@@ -207,17 +265,21 @@ def main() -> int:
 
     instance_lock = _acquire_single_instance_lock()
     if instance_lock is None:
-        logger.warning("Another instance is already running; exiting.")
-        QMessageBox.warning(
-            None, APP_NAME,
-            f"{APP_NAME} is already running.\n\nOnly one instance can run at a time.",
-        )
+        if _try_focus_running_instance():
+            logger.info("Another instance is already running; focused it instead of starting a new one.")
+        else:
+            logger.warning("Another instance is already running (and could not be reached to focus); exiting.")
+            QMessageBox.warning(
+                None, APP_NAME,
+                f"{APP_NAME} is already running.\n\nOnly one instance can run at a time.",
+            )
         return 1
     app.instance_lock = instance_lock  # keep it alive for the process lifetime
 
     window = MainWindow()
     window.show_startup()
     app.set_main_window(window)
+    app.focus_server = _start_focus_server(window)  # keep alive for the process lifetime
 
     startup_project = _project_path_from_argv(sys.argv)
     if startup_project:

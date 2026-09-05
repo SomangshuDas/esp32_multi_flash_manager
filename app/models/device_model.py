@@ -68,6 +68,14 @@ class SecurityConfig:
     # DeviceConfig.custom_flash_args' existing pattern.
     custom_efuse_args: str = ""
 
+    # Opt-in: after a "generate" key_source key is written to disk, also
+    # copy its bytes into this OS's secure-storage keychain (see
+    # app/utilities/key_vault.py) as an extra layer beyond the plain key
+    # file. Off by default -- writing to the OS keychain can itself
+    # trigger an OS-level permission prompt on some platforms, so this is
+    # only ever done when explicitly requested, never silently.
+    store_keys_in_os_keychain: bool = False
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "enable_flash_encryption": self.enable_flash_encryption,
@@ -83,6 +91,7 @@ class SecurityConfig:
             "keep_key_readable": self.keep_key_readable,
             "encrypt_on_write": self.encrypt_on_write,
             "custom_efuse_args": self.custom_efuse_args,
+            "store_keys_in_os_keychain": self.store_keys_in_os_keychain,
         }
 
     @staticmethod
@@ -101,6 +110,7 @@ class SecurityConfig:
             keep_key_readable=data.get("keep_key_readable", False),
             encrypt_on_write=data.get("encrypt_on_write", True),
             custom_efuse_args=data.get("custom_efuse_args", ""),
+            store_keys_in_os_keychain=data.get("store_keys_in_os_keychain", False),
         )
 
     def clone(self) -> "SecurityConfig":

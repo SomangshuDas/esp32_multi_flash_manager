@@ -33,7 +33,10 @@ from app.flash_engine.security_manager import (
 )
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
+from app.utilities import key_vault
+from app.utilities.helpers import propagate_trace_hook
 from app.utilities.constants import (
+    PROVISION_STALL_TIMEOUT_SECONDS,
     STATUS_BURNING,
     STATUS_COMPLETED,
     STATUS_FAILED,
@@ -69,7 +72,13 @@ class ProvisionWorker(QThread):
             self._process.terminate()
 
     # ------------------------------------------------------------------
-    def run(self) -> None:  # noqa: C901 - sequential provisioning steps are inherently branchy
+    def run(self) -> None:
+        # See helpers.propagate_trace_hook: QThread bypasses threading, so
+        # coverage's tracer never auto-attaches without this.
+        propagate_trace_hook()
+        self._run_impl()
+
+    def _run_impl(self) -> None:  # noqa: C901 - sequential provisioning steps are inherently branchy
         device_id = self.device.id
         start_time = time.monotonic()
         sec = self.device.security
@@ -85,6 +94,7 @@ class ProvisionWorker(QThread):
                     self._finish(device_id, False, f"Key generation failed: {result.error_message}", start_time)
                     return
                 self.log_line.emit(device_id, f">>> Key written to {sec.flash_encryption_key_path}")
+                self._maybe_vault_key(device_id, sec, sec.flash_encryption_key_path)
 
             if sec.enable_secure_boot and sec.key_source == "generate":
                 self.status_changed.emit(device_id, STATUS_GENERATING_KEY)
@@ -97,6 +107,7 @@ class ProvisionWorker(QThread):
                     self._finish(device_id, False, f"Signing key generation failed: {result.error_message}", start_time)
                     return
                 self.log_line.emit(device_id, f">>> Key written to {sec.secure_boot_key_path}")
+                self._maybe_vault_key(device_id, sec, sec.secure_boot_key_path)
 
             if self._cancel_requested:
                 self._finish(device_id, False, "Cancelled before burning any eFuses.", start_time)
@@ -141,7 +152,7 @@ class ProvisionWorker(QThread):
         self.log_line.emit(device_id, ">>> Command: " + " ".join(command))
         self._process = FlashProcess(command)
         self._process.start()
-        for line in self._process.iter_lines(stall_timeout=60.0):
+        for line in self._process.iter_lines(stall_timeout=PROVISION_STALL_TIMEOUT_SECONDS):
             if self._cancel_requested:
                 self._process.terminate()
                 return False
@@ -152,6 +163,23 @@ class ProvisionWorker(QThread):
             self.log_line.emit(device_id, line)
         return_code = self._process.wait(timeout=10)
         return return_code == 0
+
+    def _maybe_vault_key(self, device_id: str, sec, key_path: str) -> None:
+        """After a freshly-generated key is written to disk, optionally
+        also copy it into the OS keychain (see app/utilities/key_vault.py)
+        if the device opted in. Best-effort and never fatal to
+        provisioning -- a failed/unavailable keychain still leaves the
+        key file itself intact and usable."""
+        if not sec.store_keys_in_os_keychain or not key_path:
+            return
+        if key_vault.store_key_file(key_path):
+            self.log_line.emit(device_id, f">>> Also stored a copy of {key_path} in the OS keychain.")
+        else:
+            self.log_line.emit(
+                device_id,
+                f">>> Could not store {key_path} in the OS keychain (unavailable on this system) -- "
+                "the key file on disk is unaffected.",
+            )
 
     def _log_multiline(self, device_id: str, text: str) -> None:
         for line in text.splitlines():

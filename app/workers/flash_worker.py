@@ -30,6 +30,7 @@ into sooner or later).
 from __future__ import annotations
 
 import time
+from collections import deque
 
 from PySide6.QtCore import QThread, Signal
 
@@ -40,8 +41,8 @@ from app.flash_engine.esptool_wrapper import (
 )
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
+from app.utilities.app_settings import get_flash_stall_timeout_seconds
 from app.utilities.constants import (
-    FLASH_STALL_TIMEOUT_SECONDS,
     STATUS_CANCELLED,
     STATUS_CONNECTING,
     STATUS_COMPLETED,
@@ -51,6 +52,7 @@ from app.utilities.constants import (
     STATUS_UPLOADING,
     STATUS_VERIFYING,
 )
+from app.utilities.helpers import propagate_trace_hook
 
 logger = get_logger(__name__)
 
@@ -72,12 +74,32 @@ class FlashWorker(QThread):
     log_line = Signal(str, str)
     finished_flash = Signal(str, bool, str, float)
 
-    def __init__(self, device: DeviceConfig, parent=None) -> None:
+    # How far back the rolling transfer-speed window looks (see
+    # _update_speed below).
+    _SPEED_WINDOW_SECONDS = 3.0
+
+    def __init__(self, device: DeviceConfig, parent=None, *, stall_timeout: float | None = None) -> None:
         super().__init__(parent)
         self.device = device
         self._process: FlashProcess | None = None
         self._cancel_requested = False
         self._last_progress_bytes_time: float | None = None
+        self._speed_samples: deque[tuple[float, float]] = deque()
+        # Resolved on the MAIN thread (by whichever caller constructs this
+        # worker) if not given explicitly, and never re-read from inside
+        # run()/_run_impl() itself: run() executes on a real background
+        # QThread, and this app's settings loader touches os.environ (via
+        # get_app_data_dir) the first time it's ever called in the
+        # process. Reading env vars from a background thread at the same
+        # moment the main thread mutates them (as this app's own test
+        # suite does between tests) races on CPython/glibc's environ
+        # array and can abort the whole process, not just raise a Python
+        # exception -- found via a real, reproducible crash in
+        # tests/workers/test_flash_worker_e2e.py while developing this
+        # feature, tracked down by bisecting which change reintroduced it.
+        self._stall_timeout = (
+            stall_timeout if stall_timeout is not None else get_flash_stall_timeout_seconds()
+        )
 
     # ------------------------------------------------------------------
     def request_cancel(self) -> None:
@@ -88,9 +110,17 @@ class FlashWorker(QThread):
             self._process.terminate()
 
     # ------------------------------------------------------------------
-    def run(self) -> None:  # noqa: C901 - state machine is inherently branchy
+    def run(self) -> None:
+        # QThread bypasses Python's threading module, so coverage's tracer
+        # never auto-attaches to this thread; re-arm it before delegating
+        # to the real implementation. See helpers.propagate_trace_hook.
+        propagate_trace_hook()
+        self._run_impl()
+
+    def _run_impl(self) -> None:  # noqa: C901 - state machine is inherently branchy
         device_id = self.device.id
         start_time = time.monotonic()
+        stall_timeout = self._stall_timeout
 
         try:
             self.status_changed.emit(device_id, STATUS_PREPARING)
@@ -112,12 +142,12 @@ class FlashWorker(QThread):
             wrote_any = False
             stalled = False
             fatal_detail = ""
-            for line in self._process.iter_lines(stall_timeout=FLASH_STALL_TIMEOUT_SECONDS):
+            for line in self._process.iter_lines(stall_timeout=stall_timeout):
                 if self._cancel_requested:
                     break
 
                 if line is None:
-                    # No output at all for FLASH_STALL_TIMEOUT_SECONDS: the
+                    # No output at all for stall_timeout seconds: the
                     # subprocess is treated as hung (typically the device
                     # dropped off the bus mid-write and the OS driver never
                     # unblocked esptool's write/read call), not merely slow.
@@ -128,7 +158,7 @@ class FlashWorker(QThread):
                     stalled = True
                     self.log_line.emit(
                         device_id,
-                        f">>> No response for {int(FLASH_STALL_TIMEOUT_SECONDS)}s -- "
+                        f">>> No response for {int(stall_timeout)}s -- "
                         "the device appears to have disconnected. Aborting.",
                     )
                     break
@@ -151,7 +181,7 @@ class FlashWorker(QThread):
                     wrote_any = True
                     if event.percent is not None:
                         self.progress_changed.emit(device_id, event.percent, event.address)
-                        self._update_speed(device_id, start_time)
+                        self._update_speed(device_id, start_time, event.address)
                 elif event.kind == "verifying":
                     self.status_changed.emit(device_id, STATUS_VERIFYING)
                 elif event.kind == "fatal_error":
@@ -179,7 +209,7 @@ class FlashWorker(QThread):
                 self._finish(
                     device_id, False,
                     f"Device stopped responding on {self.device.com_port} for "
-                    f"over {int(FLASH_STALL_TIMEOUT_SECONDS)}s during flashing (likely "
+                    f"over {int(stall_timeout)}s during flashing (likely "
                     "disconnected). Check the USB cable/connection and retry.",
                     start_time,
                 )
@@ -234,14 +264,71 @@ class FlashWorker(QThread):
             self._finish(device_id, False, f"Unexpected error: {exc}", start_time)
 
     # ------------------------------------------------------------------
-    def _update_speed(self, device_id: str, start_time: float) -> None:
-        """Rough throughput estimate for the UI's 'transfer speed' column."""
-        elapsed = max(time.monotonic() - start_time, 0.001)
+    def _update_speed(self, device_id: str, start_time: float, address: str) -> None:
+        """
+        Rolling-window throughput estimate for the UI's 'transfer speed'
+        column.
+
+        Previously this divided the *entire* firmware set's total bytes
+        by elapsed-time-since-the-whole-flash-started on every progress
+        tick -- a cumulative average from t=0 that includes the slow
+        connect/erase phase at the very beginning. On a device with more
+        than one enabled firmware entry this dragged the displayed speed
+        for every later file down by however long the first file's
+        connect/erase took, so the number shown was never a good
+        estimate of the throughput actually happening right now.
+
+        This instead derives bytes-written-so-far from esptool's own
+        write-cursor address (the "Writing at 0x.." line reports the
+        *current flash offset*, which keeps climbing within a single
+        file too -- it is not simply "this file's start address" -- so
+        bytes-done is computed as every earlier entry's full size plus
+        how far the cursor has moved into whichever entry it currently
+        falls inside), then reports the throughput observed within a
+        short rolling window of those samples so the number tracks
+        current write speed instead of a whole-run average.
+        """
         enabled = self.device.enabled_firmware()
         total_bytes = sum(e.file_size for e in enabled)
-        if total_bytes <= 0:
+        if total_bytes <= 0 or not address:
             return
-        kbps = (total_bytes / elapsed) / 1024.0
+        try:
+            cursor = int(address, 16)
+        except ValueError:
+            return
+
+        bytes_done = 0
+        for entry in sorted(enabled, key=lambda e: int(e.address, 16)):
+            entry_start = int(entry.address, 16)
+            entry_end = entry_start + entry.file_size
+            if cursor >= entry_end:
+                bytes_done += entry.file_size
+            elif cursor >= entry_start:
+                bytes_done += cursor - entry_start
+                break
+            else:
+                break
+        bytes_done = min(bytes_done, total_bytes)
+
+        now = time.monotonic()
+        self._speed_samples.append((now, bytes_done))
+
+        cutoff = now - self._SPEED_WINDOW_SECONDS
+        while len(self._speed_samples) > 1 and self._speed_samples[0][0] < cutoff:
+            self._speed_samples.popleft()
+
+        oldest_time, oldest_bytes = self._speed_samples[0]
+        window_elapsed = now - oldest_time
+        window_bytes = bytes_done - oldest_bytes
+
+        if window_elapsed <= 0 or window_bytes <= 0:
+            # Not enough of a window yet (typically just the very first
+            # sample) -- fall back to a coarse cumulative average rather
+            # than emitting a zero/spurious value on the first tick.
+            elapsed_total = max(now - start_time, 0.001)
+            kbps = (bytes_done / elapsed_total) / 1024.0
+        else:
+            kbps = (window_bytes / window_elapsed) / 1024.0
         self.speed_changed.emit(device_id, kbps)
 
     def _finish(self, device_id: str, success: bool, message: str, start_time: float) -> None:
