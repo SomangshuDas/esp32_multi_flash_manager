@@ -36,7 +36,7 @@ from app.utilities.constants import (
     FLASH_STALL_TIMEOUT_SECONDS,
     SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS,
 )
-from app.utilities.helpers import get_app_data_dir
+from app.utilities.helpers import clear_file_hidden, get_app_data_dir, mark_file_hidden
 
 logger = get_logger(__name__)
 
@@ -97,7 +97,9 @@ class AppSettings:
                 json.dump(self._data, handle, indent=2, ensure_ascii=False)
                 handle.flush()
                 os.fsync(handle.fileno())
+            mark_file_hidden(tmp_path)
             os.replace(tmp_path, self._path)
+            clear_file_hidden(self._path)
         except OSError:
             logger.exception("Failed to write %s", self._path)
             with suppress(OSError):

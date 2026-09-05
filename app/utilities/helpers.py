@@ -162,6 +162,53 @@ def validate_extra_esptool_args(raw: str) -> str | None:
     return None
 
 
+def mark_file_hidden(path: str | Path) -> None:
+    """
+    Best-effort: hide a purely internal/sidecar file (advisory lock
+    sidecars, atomic-write temp files, ...) from normal file-browser
+    view.
+
+    A leading dot in the filename (the convention already used
+    throughout this app for such files, e.g. ``.project.emfm.tmp-1234``)
+    is enough to hide a file on Linux and in macOS Finder, but Windows
+    Explorer does NOT treat a leading dot as significant at all -- a
+    dotfile is exactly as visible there as any other file, so on that
+    platform hiding it requires actually setting the Win32 "hidden" file
+    attribute. This is a no-op (and never raises) on every other
+    platform, and swallows any error on Windows too (e.g. a filesystem
+    that doesn't support the attribute) since this is cosmetic, never
+    something a save/lock operation should fail over.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        FILE_ATTRIBUTE_HIDDEN = 0x02
+        ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_HIDDEN)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - purely cosmetic, never fatal
+        pass
+
+
+def clear_file_hidden(path: str | Path) -> None:
+    """
+    Best-effort counterpart to mark_file_hidden(): strip the Windows
+    "hidden" attribute back off a path. Used after an atomic write
+    replaces a hidden temp file onto its real, user-facing destination
+    (os.replace()/MoveFileExW on Windows carries the source file's
+    attributes over to the destination name), so the real deliverable
+    file a user asked to save is never left invisible in Explorer.
+    No-op everywhere except Windows; never raises.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        FILE_ATTRIBUTE_NORMAL = 0x80
+        ctypes.windll.kernel32.SetFileAttributesW(str(path), FILE_ATTRIBUTE_NORMAL)  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 - purely cosmetic, never fatal
+        pass
+
+
 def safe_filename(name: str) -> str:
     """Strip characters that are illegal in filenames on Windows (a superset
     of what's illegal on macOS/Linux), so a safe name works on every OS."""

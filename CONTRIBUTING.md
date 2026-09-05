@@ -62,23 +62,39 @@ your PR is specifically about changing the pattern itself:
 
 ## Testing your change
 
-There's no bundled test suite yet (see §7 of the developer docs for
-why, and what a good addition would look like), but at minimum, before
-opening a PR:
+This repo has a full `pytest` suite under `tests/` (410 tests as of this
+writing, mirroring `app/`'s package layout), run on every push/PR by
+`.github/workflows/test.yml` with coverage uploaded to Codecov — see §7
+of `docs/DEVELOPER_DOCUMENTATION.md` for how it's organized and why the
+architecture makes it practical. Before opening a PR:
 
-1. **Syntax-check** every file you touched:
+1. **Run the full suite** and make sure it's green:
+   ```bash
+   pip install -r requirements.txt -r requirements-dev.txt
+   QT_QPA_PLATFORM=offscreen pytest
+   ```
+2. **Add or update tests for your change**, in the `tests/` subfolder
+   that mirrors whatever you touched (e.g. a fix in
+   `app/project_manager/project_io.py` gets its test in
+   `tests/project_manager/`). A bug fix should include a test that would
+   have failed before your fix; a new behavior should include a test
+   covering it. PRs that only add production code without matching test
+   coverage are much slower to review and merge.
+3. **Syntax-check** every file you touched (redundant if the suite above
+   passed, but a quick sanity check if you're iterating without running
+   the full suite each time):
    ```bash
    python -c "import ast; ast.parse(open('path/to/file.py').read())"
    ```
-2. **Import-test headlessly** (catches missing imports/circular imports
+4. **Import-test headlessly** (catches missing imports/circular imports
    without needing a display):
    ```bash
    QT_QPA_PLATFORM=offscreen python -c "import app.ui.your_module"
    ```
-3. If your change touches `espefuse`/eFuse logic, verify it against
+5. If your change touches `espefuse`/eFuse logic, verify it against
    `espefuse`'s own `--virt` (virtual/no-hardware) mode where possible,
    rather than only against real hardware.
-4. If your change touches packaging (`packaging/windows`,
+6. If your change touches packaging (`packaging/windows`,
    `packaging/linux`, `packaging/macos`), make sure any new
    dependency data files are covered by the appropriate
    `--collect-all` flag — see `docs/BUILD_INSTRUCTIONS.md` for why

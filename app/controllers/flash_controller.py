@@ -49,6 +49,18 @@ class FlashController(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._workers: dict[str, FlashWorker] = {}
+        # Authoritative busy state, set/cleared by the controller itself
+        # on the main thread (see _launch_worker/_on_worker_finished).
+        # QThread.isRunning() is *not* safe to rely on for this: it is
+        # cleared only once the underlying OS thread has fully torn down,
+        # which can happen slightly *after* the finished_flash signal
+        # (queued cross-thread) has already been delivered and processed
+        # here -- so a check made right after batch_finished/device_finished
+        # could still observe isRunning() == True for a worker that has,
+        # from every observable-from-the-controller point of view, already
+        # finished. Falls back to worker.isRunning() when a device_id has
+        # no entry yet (e.g. a worker injected directly for testing).
+        self._busy: dict[str, bool] = {}
         self._batch_size = 0
         self._batch_results: dict[str, bool] = {}
         self._batch_start_time: float = 0.0
@@ -61,10 +73,14 @@ class FlashController(QObject):
     # ------------------------------------------------------------------
     def is_busy(self, device_id: str) -> bool:
         worker = self._workers.get(device_id)
-        return worker is not None and worker.isRunning()
+        if worker is None:
+            return False
+        if device_id in self._busy:
+            return self._busy[device_id]
+        return worker.isRunning()
 
     def any_busy(self) -> bool:
-        return any(w.isRunning() for w in self._workers.values())
+        return any(self.is_busy(device_id) for device_id in self._workers)
 
     # ------------------------------------------------------------------
     def start_batch(self, devices: list[DeviceConfig]) -> None:
@@ -107,6 +123,7 @@ class FlashController(QObject):
         worker.log_line.connect(self._capture_mac_from_log)
         worker.finished_flash.connect(self._on_worker_finished)
         self._workers[device.id] = worker
+        self._busy[device.id] = True
         worker.start()
 
     def _capture_mac_from_log(self, device_id: str, line: str) -> None:
@@ -122,6 +139,12 @@ class FlashController(QObject):
             self._device_macs[device_id] = mac
 
     def _on_worker_finished(self, device_id: str, success: bool, message: str, duration: float) -> None:
+        # Flip busy state first, before emitting anything: any slot
+        # listening on device_finished/batch_finished (e.g. is_busy()
+        # checks made from a signal handler) must see the device as no
+        # longer busy, regardless of how long the underlying QThread
+        # itself takes to actually finish tearing down.
+        self._busy[device_id] = False
         self.device_finished.emit(device_id, success, message, duration)
         self._batch_results[device_id] = success
 

@@ -147,7 +147,7 @@ class TestProjectLocking:
         from datetime import datetime
 
         project_path = str(tmp_path / "project.emfm")
-        lock_path = tmp_path / "project.emfm.lock"
+        lock_path = project_io._lock_path_for(project_path)
         import json
         with lock_path.open("w", encoding="utf-8") as handle:
             json.dump(
@@ -161,7 +161,7 @@ class TestProjectLocking:
         from datetime import datetime, timedelta
 
         project_path = str(tmp_path / "project.emfm")
-        lock_path = tmp_path / "project.emfm.lock"
+        lock_path = project_io._lock_path_for(project_path)
         ancient = datetime.now().astimezone() - timedelta(days=10)
         import json
         with lock_path.open("w", encoding="utf-8") as handle:
@@ -174,7 +174,7 @@ class TestProjectLocking:
         from datetime import datetime
 
         project_path = str(tmp_path / "project.emfm")
-        lock_path = tmp_path / "project.emfm.lock"
+        lock_path = project_io._lock_path_for(project_path)
         import json
         with lock_path.open("w", encoding="utf-8") as handle:
             json.dump(
@@ -183,6 +183,18 @@ class TestProjectLocking:
             )
         project_io.release_project_lock(project_path)
         assert lock_path.is_file()  # untouched -- different holder string
+
+    def test_lock_sidecar_filename_is_dot_prefixed_hidden(self, tmp_path):
+        """The lock sidecar must read as a hidden dotfile next to the
+        project it guards (e.g. ".project.emfm.lock"), not a plainly
+        visible "project.emfm.lock" sitting right alongside the user's
+        own project file in their file browser."""
+        project_path = str(tmp_path / "project.emfm")
+        info = project_io.acquire_project_lock(project_path)
+        assert info is not None
+        assert info.lock_path.name == ".project.emfm.lock"
+        assert info.lock_path.parent == tmp_path
+        assert info.lock_path.is_file()
 
 
 class TestAutosaveRecoverySlot:

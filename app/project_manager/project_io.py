@@ -22,13 +22,14 @@ from app.logging_setup.logger import get_logger
 from app.models.project_model import ProjectModel
 from app.utilities.app_settings import get_settings
 from app.utilities.constants import (
+    APP_VERSION,
     AUTOSAVE_RECOVERY_DIRNAME,
     AUTOSAVE_RECOVERY_FILENAME,
     MAX_RECENT_PROJECTS,
     PROJECT_LOCK_FILE_SUFFIX,
     PROJECT_LOCK_STALE_SECONDS,
 )
-from app.utilities.helpers import get_app_data_dir
+from app.utilities.helpers import clear_file_hidden, get_app_data_dir, mark_file_hidden
 
 logger = get_logger(__name__)
 
@@ -72,7 +73,15 @@ def _atomic_write_json(path: Path, data: dict, *, create_parents: bool = False) 
         json.dump(data, handle, indent=2, ensure_ascii=False)
         handle.flush()
         os.fsync(handle.fileno())
+    # Dotfile-hidden on Linux/macOS already just by its name; also set
+    # the real Windows "hidden" attribute, since a leading dot means
+    # nothing to Explorer -- see mark_file_hidden()'s docstring.
+    mark_file_hidden(tmp_path)
     os.replace(tmp_path, path)
+    # os.replace()/MoveFileExW on Windows carries the temp file's hidden
+    # attribute over onto `path` -- this is the real, user-facing file
+    # being saved, so it must never end up invisible in Explorer.
+    clear_file_hidden(path)
 
 
 # --------------------------------------------------------------------------
@@ -148,7 +157,22 @@ def _absolutize_firmware_paths(data: dict, base_dir: Path) -> dict:
 def save_project(project: ProjectModel, file_path: str) -> None:
     """Serialize `project` to `file_path` as pretty-printed JSON,
     atomically, with firmware paths stored relative to `file_path`'s own
-    directory wherever possible."""
+    directory wherever possible.
+
+    A real Save/Save As always stamps the CURRENT app's schema_version
+    onto the in-memory project before writing, regardless of what it was
+    loaded with. ProjectModel.from_dict() deliberately *preserves* an
+    older file's original schema_version string (see its own docstring
+    and tests/models/test_project_model.py) so that value is only ever
+    a record of what last wrote the file on disk -- without this, a
+    project opened from an old 1.0.0-era file kept reporting itself as
+    schema_version "1.0.0" forever, on every subsequent save, even
+    though this build had already migrated its in-memory structure to
+    the current schema on load. Every real save is this build actually
+    writing the file in its own current schema, so the file's own
+    schema_version must say so too.
+    """
+    project.schema_version = APP_VERSION
     path = Path(file_path).resolve()
     try:
         data = _relativize_firmware_paths(project.to_dict(), path.parent)
@@ -253,7 +277,16 @@ class ProjectLockInfo:
 
 
 def _lock_path_for(file_path: str) -> Path:
-    return Path(str(file_path) + PROJECT_LOCK_FILE_SUFFIX)
+    # Dot-prefix the sidecar's own filename (not just append a suffix to
+    # the full path) so it reads as a hidden dotfile on Linux/macOS --
+    # e.g. "project.emfm" -> ".project.emfm.lock" next to it, not the
+    # previous "project.emfm.lock", which had no leading dot at all and
+    # was exactly as visible as the project file itself in every file
+    # browser. mark_file_hidden() (see acquire_project_lock) additionally
+    # sets the real Windows hidden attribute, since Explorer doesn't
+    # treat a leading dot as meaningful.
+    p = Path(file_path)
+    return p.with_name(f".{p.name}{PROJECT_LOCK_FILE_SUFFIX}")
 
 
 def _current_holder() -> str:
@@ -338,6 +371,7 @@ def acquire_project_lock(file_path: str) -> ProjectLockInfo | None:
     try:
         with lock_path.open("w", encoding="utf-8") as handle:
             json.dump({"holder": info.holder, "pid": info.pid, "acquired_at": info.acquired_at}, handle)
+        mark_file_hidden(lock_path)
     except OSError:
         logger.warning("Could not write project lock sidecar for %s (continuing without one)", file_path)
     return info

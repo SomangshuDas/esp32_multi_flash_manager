@@ -61,7 +61,7 @@ This document is for engineers extending or maintaining the codebase.
 | `app/controllers/project_controller.py` | New/open/save/save-as, missing-firmware detection on load |
 | `app/flash_engine/esptool_wrapper.py` | `FlashCommandBuilder` (DeviceConfig → argv) + `FlashProcess` (subprocess wrapper) + `parse_progress_line` |
 | `app/flash_engine/validator.py` | Pure, offline pre-upload validation (duplicate/invalid/overlapping addresses, port availability, etc.) → `ValidationReport` |
-| `app/project_manager/project_io.py` | `.emfm` JSON I/O + recent-projects list (QSettings) |
+| `app/project_manager/project_io.py` | `.emfm`/`.efmproj` project I/O: atomic (temp-file + `os.replace`) save/load, `schema_version` migration on load and re-stamping on every save, advisory cross-process/cross-machine locking (hidden sidecar), firmware-path relativization, crash-recovery autosave slot, and the recent-projects list (via `app_settings.py`) |
 | `app/device_manager/port_scanner.py` | pyserial wrapper: `list_available_ports()` |
 | `app/firmware_manager/auto_detect.py` | Folder → `list[FirmwareEntry]` with known-address assignment |
 | `app/firmware_manager/profiles.py` | Named, reusable firmware+settings bundles, stored as JSON in app-data |
@@ -86,6 +86,10 @@ This document is for engineers extending or maintaining the codebase.
 | `app/ui/serial_monitor.py` | `SerialMonitorWidget` + background `_SerialReaderThread`: standalone, multi-port live serial console |
 | `app/ui/shortcuts_dialog.py` | `ShortcutsDialog`: remap every customisable shortcut, with live duplicate-conflict warnings |
 | `app/utilities/sound_player.py` | `play_event_sound(event_key)` / `play_preview_sound(path)`: QSoundEffect-based notification sounds with system-beep fallback |
+| `app/utilities/app_settings.py` | JSON-backed replacement for `QSettings`: every persisted preference (theme, defaults, window geometry, recent projects) lives in one atomically-written `settings.json` under the app-data dir instead of the registry/.plist/.ini |
+| `app/utilities/key_hashing.py` | Salted, stretched PBKDF2-HMAC-SHA256 hashing for the Interface Lock unlock key, with transparent verify-and-upgrade of a hash produced by the old unsalted single-round SHA-256 scheme |
+| `app/utilities/key_vault.py` | Optional, best-effort mirroring of freshly generated flash-encryption/secure-boot key material into the OS's own keychain (via the `keyring` package), alongside the key file that's always written regardless |
+| `app/utilities/read_output_parser.py` | Pure text-in/rows-out parser turning raw `esptool`/`espefuse` Read Device output into the Read Device dialog's friendly **Summary** rows; the **Log** tab always shows the unmodified original output alongside it |
 | `app/ui/*.py` | Qt widgets/dialogs — see file docstrings for each |
 
 ## 3. Extending chip / flash-parameter support
@@ -146,21 +150,65 @@ access to widget internals.
 
 ## 7. Testing
 
-There is no bundled test suite in this deliverable, but the architecture
-is test-friendly:
+A full `pytest` suite lives under `tests/`, mirroring `app/`'s package
+layout (`tests/models/`, `tests/controllers/`, `tests/workers/`, ...) —
+410 tests as of this writing, run on every push/PR by
+[`.github/workflows/test.yml`](../.github/workflows/test.yml) with
+coverage uploaded to Codecov (overall line coverage currently ~60%, with
+the Qt-free backend modules well above that and most of the remaining
+gap in `app/ui/*.py` dialogs and `main_window.py` — see the coverage
+table `pytest` prints, or the Codecov report, for exactly which lines).
+
+Run it locally with:
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+QT_QPA_PLATFORM=offscreen pytest
+```
+
+`pytest.ini` sets `testpaths = tests` and always runs with
+`--cov=app --cov-report=term-missing --cov-report=xml`, so a plain
+`pytest` invocation already gives you the same coverage table CI does.
+`QT_QPA_PLATFORM=offscreen` (also set automatically in CI) means no real
+display or windowing system is needed even for the `tests/ui/` suite.
+
+Why the architecture makes this practical:
 
 - `app/models`, `app/flash_engine/validator.py`,
   `app/firmware_manager/auto_detect.py`, and `app/utilities/helpers.py`
-  have zero Qt dependency and can be tested with plain `pytest`.
-- `app/controllers` can be tested by constructing them directly (they're
+  have zero Qt dependency and are tested with plain `pytest` — see
+  `tests/models/`, `tests/flash_engine/test_validator.py`,
+  `tests/firmware_manager/test_auto_detect.py`, and
+  `tests/utilities/test_helpers.py`.
+- `app/controllers` are tested by constructing them directly (they're
   `QObject`s but don't need a running event loop for their plain methods
   — only their signals need `QApplication` to exist, which `pytest-qt`
-  handles).
-- UI smoke-testing can run headlessly by setting
-  `QT_QPA_PLATFORM=offscreen` before importing `PySide6`.
+  handles) — see `tests/controllers/`.
+- `FlashWorker`/`ReadWorker`/`ProvisionWorker` run on real `QThread`s,
+  which `coverage.py` cannot see into by default — each worker's `run()`
+  is a thin trampoline that calls `propagate_trace_hook()`
+  (`app/utilities/helpers.py`) before delegating to the real
+  `_run_impl()`, which re-arms `coverage.py`'s tracer on that thread so
+  it's actually measured. Without this, a worker could be fully
+  exercised by its own test and still show as almost entirely
+  uncovered. `tests/workers/test_flash_worker_e2e.py` drives the real
+  flashing pipeline end-to-end against a fake `esptool` subprocess this
+  way, and `tests/workers/test_flash_worker_speed.py` covers the
+  throughput/ETA math the same route.
+- UI smoke-testing (`tests/ui/test_smoke.py`), Interface Lock
+  (`tests/ui/test_interface_lock.py`), and the busy-device guard on
+  Batch Edit/Assign Firmware Set/Firmware Profiles
+  (`tests/ui/test_busy_device_guard.py`) all run headlessly under
+  `QT_QPA_PLATFORM=offscreen`.
+- `tests/project_manager/test_project_io_fuzz.py` uses `hypothesis` to
+  fuzz `.emfm`/`.efmproj` project-file parsing against malformed/edge-case
+  JSON, on top of the example-based tests in `test_project_io.py` and
+  `test_project_io_new_features.py`.
 
-Recommended additions for a production fork: `pytest` + `pytest-qt`,
-plus a `tests/` folder mirroring the `app/` package layout.
+If you add a new module or a new user-facing behavior, add its test
+alongside it in the matching `tests/` subfolder rather than deferring
+testing to a follow-up — see `CONTRIBUTING.md`'s "Testing your change"
+section for the expectations on a pull request.
 
 ## 8. Logging
 
@@ -206,17 +254,21 @@ in the app opens this directory directly on any OS via
 - **CI**: `.github/workflows/build.yml` builds and smoke-tests the app on
   `windows-latest`, `macos-latest`, and `ubuntu-latest` on every push, so a
   platform regression is caught before it reaches a release.
+  `.github/workflows/test.yml` separately runs the full `pytest` suite
+  (Linux only, headless) with coverage uploaded to Codecov — see §7.
 
 ## 10. Known simplifications in this deliverable
 
-For transparency: transfer-speed is a rough estimate (total enabled
-firmware bytes ÷ elapsed time), not read from esptool's own byte-level
-telemetry, since esptool does not expose that over a stable machine-
-readable channel. ETA is derived from elapsed-time ÷ percent-complete,
-which is accurate once erase/connect overhead is behind the device but
-can be noisy in the first few seconds. The **Tools → Check for
-Updates...** menu item is fully wired up: it queries the GitHub
-Releases API for `GITHUB_REPO` (see `app/utilities/constants.py`),
+For transparency: the **transfer speed** column is a rolling-window
+estimate derived from esptool's own reported write-cursor position (the
+"Writing at 0x.." lines), not a literal byte-rate field esptool exposes
+directly — it tracks a short window of recent cursor samples (see
+`FlashWorker._update_speed()`) so it reflects current throughput rather
+than smoothing over the whole run. ETA is derived from elapsed-time ÷
+percent-complete, which is accurate once erase/connect overhead is
+behind the device but can be noisy in the first few seconds. The **Tools
+→ Check for Updates...** menu item is fully wired up: it queries the
+GitHub Releases API for `GITHUB_REPO` (see `app/utilities/constants.py`),
 compares the latest tag against `APP_VERSION`, and — if a newer
 release exists — offers to open the browser straight to the release
 asset matching both the current OS *and* the current build kind

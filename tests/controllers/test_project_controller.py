@@ -195,3 +195,69 @@ class TestLegacyProjectFileSupport:
         controller.open_project(str(path))
         assert controller.current_file_path is None
         assert controller.dirty is True
+
+
+class TestAutosave:
+    """
+    Coverage for ProjectController.autosave() itself -- previously only
+    exercised indirectly (project_io.save_autosave_recovery/load_autosave_
+    recovery have their own direct tests, and MainWindow._on_autosave_
+    timeout is what actually calls this on a timer), so the routing
+    logic in autosave() -- real re-save vs. crash-recovery-slot fallback
+    -- had no dedicated test of its own.
+    """
+
+    def test_new_never_saved_dirty_project_goes_to_recovery_slot(self, controller):
+        """A brand-new project (current_file_path is None) that has
+        unsaved changes must be protected via the crash-recovery slot,
+        not silently skipped -- see project_controller.py's autosave()
+        docstring and the 0.12.0 release notes' "Changed" entry for
+        this exact fix."""
+        controller.project.project_name = "Never Saved Yet"
+        controller.mark_dirty()
+
+        controller.autosave()
+
+        assert controller.current_file_path is None  # never treated as a real save
+        assert controller.dirty is True  # dirty flag is untouched by the safety net
+        assert ProjectController.has_recoverable_autosave() is True
+
+    def test_new_project_with_no_changes_does_not_create_a_recovery_slot(self, controller):
+        """A brand-new, still-untouched project has nothing worth
+        protecting -- autosave() must not manufacture a recovery slot
+        out of an empty, never-edited project."""
+        assert controller.dirty is False
+
+        controller.autosave()
+
+        assert ProjectController.has_recoverable_autosave() is False
+
+    def test_already_saved_project_re_saves_in_place_not_to_recovery_slot(self, controller, tmp_path):
+        """Once a project has a real current_file_path, autosave() must
+        re-save it there directly rather than routing to the
+        crash-recovery slot (which is reserved for the never-saved
+        case)."""
+        path = tmp_path / "project.emfm"
+        controller.save_project(str(path))
+        controller.mark_dirty()
+
+        controller.autosave()
+
+        assert controller.dirty is False
+        assert path.is_file()
+        assert ProjectController.has_recoverable_autosave() is False
+
+    def test_real_save_discards_any_pending_recovery_slot(self, controller, tmp_path):
+        """Once the user does a real Save, the earlier crash-recovery
+        copy (from before that save) is no longer needed and must be
+        cleaned up -- see save_project()'s discard_autosave_recovery()
+        call -- so a stale recovery slot never gets offered back to the
+        user after they've already saved for real."""
+        controller.project.project_name = "Will Be Saved For Real"
+        controller.mark_dirty()
+        controller.autosave()
+        assert ProjectController.has_recoverable_autosave() is True
+
+        controller.save_project(str(tmp_path / "project.emfm"))
+
+        assert ProjectController.has_recoverable_autosave() is False

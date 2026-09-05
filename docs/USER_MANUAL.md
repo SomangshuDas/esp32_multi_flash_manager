@@ -24,6 +24,10 @@ Linux — see §10 for more) you can also just **double-click any `.emfm`
 file**: the app launches directly with that project already loaded, no
 manual `File → Open Project` step needed.
 
+If the app is already running and you launch it again (or double-click
+another `.emfm` file), a second copy doesn't open — the existing window
+is simply brought to the front instead.
+
 ![The app on first launch, with no devices added yet](images/main-window.png)
 
 The **Help** menu gives quick access to this manual and the About dialog:
@@ -65,8 +69,8 @@ The **Help** menu gives quick access to this manual and the About dialog:
    v5+), so there is no longer a separate Verify toggle.
    The **Chip Type** list is populated at startup from your installed
    `esptool` itself, so it always matches what your copy of esptool can
-   actually flash (see §18 for what happens if a project uses a chip your
-   esptool no longer supports).
+   actually flash (see §24 "Troubleshooting" for what happens if a
+   project uses a chip your esptool no longer supports).
 3. Switch to the **Firmware** tab to add `.bin` files (see next section).
 
 To quickly configure many similar boards, configure one device fully, then
@@ -186,12 +190,30 @@ you explicitly confirm on the Provision dialog (see step 4 below).
    files, no chip selected, a key file that isn't the size esptool expects,
    or — if you've already read this device's state via §6 below — a
    device that already shows flash encryption enabled while this job would
-   flash it in plaintext).
+   flash it in plaintext). Any text you type into a Custom Flash/eFuse
+   Arguments field is also checked here against an injection allowlist, so
+   a stray shell-metacharacter or path-like token is caught with a clear
+   error instead of surfacing as a confusing `espefuse`/`esptool` failure.
 5. Click **Provision Device (Burn eFuses)...**. The Provision dialog
    re-runs validation, then — only after you check the acknowledgement box
    **and** type the exact confirmation phrase shown on screen — starts
-   burning. Progress streams live in the dialog's log, exactly like the
-   main Upload console.
+   burning. If this run is about to burn a **freshly generated** key (not
+   an existing key file you already had a copy of), the dialog also shows
+   a key-backup reminder and a second checkbox, **"I have backed up the
+   generated key file(s) to a safe location,"** which must be checked
+   before burning can start — the key is only ever written to disk once,
+   burning is irreversible, and there's no way to recover it afterward if
+   the file is lost. Progress streams live in the dialog's log, exactly
+   like the main Upload console.
+
+Under the **Advanced** group, checking **"Also store generated keys in
+this computer's OS keychain (if available)"** additionally saves a copy of
+every freshly generated key into the OS's own credential store (Windows
+Credential Manager, macOS Keychain, or the Secret Service/KWallet on
+Linux) as a second, independent backup alongside the key file. This is
+off by default, best-effort, and has no effect at all on a machine whose
+keychain backend isn't available or working — the key file on disk is
+never affected either way.
 
 Once flash encryption is enabled with **Pass --encrypt on every Upload**
 checked (the default), the app automatically appends esptool's own
@@ -202,7 +224,8 @@ All** flow described in §7.
 The **Advanced** group's *Custom eFuse Arguments* field works like Device
 Settings' Custom Flash Arguments — anything typed there is appended
 verbatim to the `espefuse` command line, for options this tab doesn't
-expose a dedicated control for.
+expose a dedicated control for (and is checked against the same
+injection allowlist mentioned above).
 
 ## 6. Read Flash / eFuse / Chip Info
 
@@ -263,7 +286,9 @@ and shows a report if it finds problems:
 - **Errors** (block the upload): duplicate ports, no port
   selected, missing firmware files, invalid or duplicate flash addresses,
   overlapping flash addresses (see below), invalid chip/flash-mode
-  selection, no enabled firmware.
+  selection, an invalid baud rate (zero, negative, or absurdly large —
+  caught here with a clear message instead of surfacing as a confusing
+  esptool failure), no enabled firmware.
 - **Warnings** (you may proceed anyway): no firmware assigned to the
   conventional bootloader (`0x1000`) or partition-table (`0x8000`)
   addresses — this is expected if you're flashing a single merged image.
@@ -351,6 +376,12 @@ Groups & Tags" below for what tags are for.
   firmware list + settings under a name like "ESP32 RFID Reader", so it
   can be reused on other devices or in future projects.
 - **Delete** a profile you no longer need.
+- **Export...** to save any profile as a standalone, shareable JSON file
+  at a location you choose — hand it to another operator or check it
+  into version control without having to manually copy it out of the
+  app's internal profiles folder.
+- **Import...** to load a profile from a JSON file someone else exported
+  (or one you exported yourself, e.g. from another machine).
 
 ## 12. Projects
 
@@ -367,7 +398,38 @@ If a project references firmware files that no longer exist at their
 saved path (e.g. you moved the build folder), the project still loads —
 you'll get a warning dialog listing what's missing, and the affected rows
 are marked **Missing!** in red on the Firmware tab. Use **Add BIN...** to
-relink them.
+relink them. Firmware paths are stored relative to the `.emfm` file's own
+directory whenever possible, so moving or copying the whole project
+folder (including its firmware) to a new location, or handing it to a
+coworker whose checkout lives somewhere else entirely, does not break
+these references on its own — only an actually-missing file does.
+
+**Opening an older project file.** A project last saved by a much older
+release of this app opens and works normally — any structural changes
+needed are applied automatically, invisibly, as soon as it's opened.
+Saving it again (`Save`/`Save As...`) brings the file itself fully up to
+the current version's format. The reverse case is also handled: opening a
+project that was last saved by a *newer* version of this app than the one
+you're currently running shows a one-time warning that some newer
+settings may not be preserved if you save over it with this older
+version.
+
+**Opening the very old `.efmproj` format.** Projects saved before this
+app switched to the `.emfm` extension can still be opened read-only as
+far as their original file goes — the app never silently overwrites an
+`.efmproj` file. The first `Save`/`Ctrl+S` after opening one routes to
+**Save As...** instead, so you explicitly choose a new `.emfm` location
+rather than an old file quietly being left in the legacy format (or an
+old copy quietly surviving next to a new one you didn't ask for).
+
+**Opening the same project from two places at once.** If you (or a
+teammate) open the same project file from a shared network drive while
+someone else already has it open, you'll see a warning naming who
+appears to already have it open and since when. This is advisory only —
+the project still opens normally either way — since there's no way to
+truly lock a file reliably on every kind of shared drive; it exists so
+two people don't silently overwrite each other's edits without at least
+being told.
 
 **Opening a project by double-clicking it.** If the app was installed via
 one of the OS installers built from `packaging/` (rather than run from
@@ -403,7 +465,9 @@ The **Flash History** dock (bottom of the window, toggle via **View**
 menu) accumulates every attempt across the session: date, time, device
 name, port, **MAC address**, firmware summary, duration, result, and
 **QC Status**. Click **Export CSV...** to save it for QA/traceability
-records, or **Clear History** to reset it.
+records, or **Clear History** to reset it. Timestamps include your
+machine's UTC offset, so CSV exports collected from benches in different
+time zones can be reliably compared and sorted together.
 
 **Searching & filtering.** Above the table: a text box searches by device
 name, port, or MAC address; dropdowns narrow by Result (Completed/Failed/
@@ -516,12 +580,15 @@ leaving one open would leave a hole in it.
 
 The first time you use either lock mode, you'll be asked to set an
 **unlock key** (**Tools → Set Interface Lock Key...**, entered twice to
-confirm). The key itself is never stored — only its hash — so locking
-later just asks for that same key back. Closing the window (including
-the OS close button) is blocked while Full Lock is active; unlock first,
-then exit normally if you need to. The two modes are independent and can
-be combined (e.g. Settings Lock on, then Full Lock on top before walking
-away).
+confirm). The key itself is never stored — only a salted, deliberately
+slow hash of it — so locking later just asks for that same key back. If
+you set your unlock key on an older release of this app, it still works
+exactly as before; it's silently upgraded to the current, stronger
+hashing format the next time you unlock successfully, with nothing for
+you to do. Closing the window (including the OS close button) is blocked
+while Full Lock is active; unlock first, then exit normally if you need
+to. The two modes are independent and can be combined (e.g. Settings Lock
+on, then Full Lock on top before walking away).
 
 Separately, whether or not either lock is active: **Batch Edit**,
 **Assign Firmware Set to Devices**, and **Firmware Profiles** always
@@ -639,7 +706,7 @@ of whether that event is enabled, so you can preview it before saving.
   Disconnect or close that Serial Monitor window, then upload again.
 - **"Unsupported/invalid chip selection" or a startup warning about an
   unsupported chip** — the app asks your installed `esptool` at startup
-  which chips it supports (see §4); if a project uses a chip your
+  which chips it supports (see §3); if a project uses a chip your
   installed esptool doesn't report support for, you're warned on load and
   the validator blocks uploading to that device. Update `esptool`
   (`pip install --upgrade esptool`) or correct the chip type in Device

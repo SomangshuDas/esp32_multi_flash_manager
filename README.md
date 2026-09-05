@@ -41,8 +41,16 @@ implementation for correctness.
   still added, with an editable address.
 - **Project files (`.emfm`).** Save your whole bench configuration —
   every device, every firmware path, every flash setting, and your window
-  layout — to a single JSON project file. Reopening a project with missing
-  firmware never crashes; missing files are flagged and easy to relink.
+  layout — to a single JSON project file, written atomically so a crash
+  or power loss mid-save can't corrupt it. Firmware paths are stored
+  relative to the project file's own location wherever possible, so
+  moving or sharing the whole project folder doesn't break every firmware
+  reference. Reopening a project with missing firmware never crashes;
+  missing files are flagged and easy to relink. Opening the same project
+  from more than one place at once (e.g. a shared network drive) surfaces
+  a warning instead of silently letting two edits clobber each other, and
+  a project from an older release of this app is transparently brought up
+  to the current format the next time you save it.
 - **Live serial port manager.** Ports are polled continuously; plugging or
   unplugging a board is reflected in the UI within ~2 seconds, on Windows
   COM ports as well as Linux/macOS `/dev/tty*` devices.
@@ -51,8 +59,9 @@ implementation for correctness.
   and clear.
 - **Pre-upload validation.** Before anything is flashed, the app checks
   for duplicate ports, missing firmware files, invalid/duplicate flash
-  addresses, missing bootloader/partition table, invalid flash modes, and
-  invalid chip selections, and shows a report — errors block the upload.
+  addresses, missing bootloader/partition table, invalid flash modes,
+  invalid baud rates, and invalid chip selections, and shows a report —
+  errors block the upload.
 - **Flash history + CSV export.** Every attempt (success, failure, or
   cancellation) is logged with date, time, device, firmware, and duration,
   and can be exported for QA/traceability records.
@@ -97,9 +106,15 @@ implementation for correctness.
   Espressif's own Flash Download Tool relies on, never reimplemented here.
   Burning eFuses is permanent on real hardware, so nothing runs until you
   both check an acknowledgement box and type an exact confirmation phrase
-  on the Provision dialog; pre-flight validation catches missing key
-  files, no chip selected, and (once you've read a device back) flashing
-  plaintext firmware to a device that already shows encryption enabled.
+  on the Provision dialog — burning a freshly-generated key additionally
+  requires a second acknowledgement that you've backed up the key file,
+  since it's the only copy that will ever exist. Pre-flight validation
+  catches missing key files, no chip selected, custom flash/eFuse
+  arguments outside a safe allowlist, and (once you've read a device
+  back) flashing plaintext firmware to a device that already shows
+  encryption enabled. Optionally, generated keys can also be mirrored
+  into the OS's own keychain as a second backup, off by default and
+  best-effort.
 - **Read Flash / eFuse / Chip Info.** A read-only inspection panel
   (`Tools → Read Flash / eFuse / Chip Info...`, or right-click a device),
   independent of the upload workflow, built on esptool's/espefuse's own
@@ -127,8 +142,10 @@ implementation for correctness.
   and the upload validator refuses to start a flash on a port that
   already has a Serial Monitor connected, telling you to close it first.
 - **Interface Lock, in two modes** (`Tools → Lock Interface`), both
-  protected by the same key (stored as a SHA-256 hash, never in
-  plaintext):
+  protected by the same key (stored only as a salted, deliberately slow
+  PBKDF2-HMAC-SHA256 hash, never in plaintext — and a key set by an
+  older release is transparently upgraded to this scheme the next time
+  it's used):
   - **Settings Lock** keeps the window fully usable —
     uploads, Serial Monitor, and viewing logs all keep working — but
     disables anything that reconfigures what gets flashed: ports,
@@ -156,9 +173,11 @@ implementation for correctness.
   error dialog; anything truly unexpected is still caught, logged, and
   shown to the user in plain language.
 - **Auto-Save.** Silently saves your project on a configurable interval
-  (Disabled, or every 1–30 minutes) once it's been saved to disk at least
-  once — a brand-new, never-saved project is never auto-saved on your
-  behalf.
+  (Disabled, or every 1–30 minutes). A brand-new project that hasn't been
+  saved to disk yet is protected too, via a separate crash-recovery slot
+  offered back to you next time you start the app after an unexpected
+  close — it's never a substitute for a real save (it's not in Recent
+  Projects, and won't silently become "the" file), just a safety net.
 - **Dynamic MD5.** Firmware checksums are never trusted from the project
   file — they're recalculated from the actual `.bin` on disk every time
   a project loads, and flagged if a file changed since it was added.
@@ -292,7 +311,7 @@ goes.
 | **History / traceability** | Persistent flash history with CSV export (device, firmware, result, duration) | `CRC32 cal` button for factory-floor file/config verification; no persistent run history |
 | **Reusable configuration** | Named Firmware Profiles, device cloning/templates, and batch editing across selected devices | None — each session's `Factory` mode config is the only reusable state |
 | **Serial monitor** | Built-in, any number of concurrent port windows | Not included |
-| **Access control** | Two lock modes (Settings Lock / Full Lock) behind a SHA-256-hashed key | `LockSettings` toggle in `Factory` mode — prevents accidental clicks, not an access-control mechanism |
+| **Access control** | Two lock modes (Settings Lock / Full Lock) behind a salted PBKDF2-hashed key | `LockSettings` toggle in `Factory` mode — prevents accidental clicks, not an access-control mechanism |
 | **Update checking** | Built in, aware of installed vs. portable builds | Manual — check Espressif's download page for new tool versions |
 | **Theming** | System-aware light/dark, switchable live | Follows Windows' native look only |
 

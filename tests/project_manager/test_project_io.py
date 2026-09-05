@@ -11,6 +11,7 @@ from app.models.firmware_model import FirmwareEntry
 from app.models.project_model import ProjectModel
 from app.project_manager import project_io
 from app.project_manager.project_io import ProjectLoadError, load_project, save_project
+from app.utilities.constants import APP_VERSION
 
 
 class TestSaveProject:
@@ -22,6 +23,37 @@ class TestSaveProject:
         with path.open(encoding="utf-8") as handle:
             data = json.load(handle)
         assert data["project_name"] == "My Project"
+
+    def test_save_stamps_current_schema_version_on_legacy_project(self, tmp_path):
+        """An old 1.0.0-era (or any older) project must have its
+        schema_version bumped to this build's APP_VERSION as soon as it
+        goes through a real Save/Save As -- see save_project()'s
+        docstring. Without this, a project that was last written by an
+        old release kept reporting schema_version "1.0.0" forever on
+        every subsequent save, even after this build had already loaded
+        and migrated it in memory."""
+        project = ProjectModel.from_dict({"schema_version": "1.0.0", "project_name": "Old"})
+        assert project.schema_version == "1.0.0"
+
+        path = tmp_path / "project.emfm"
+        save_project(project, str(path))
+
+        assert project.schema_version == APP_VERSION
+        with path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+        assert data["schema_version"] == APP_VERSION
+
+    def test_save_as_onto_new_path_also_stamps_current_schema_version(self, tmp_path):
+        project = ProjectModel.from_dict({"schema_version": "1.0.0", "project_name": "Old"})
+        original_path = tmp_path / "project.emfm"
+        save_project(project, str(original_path))
+
+        new_path = tmp_path / "save_as_copy.emfm"
+        save_project(project, str(new_path))
+
+        with new_path.open(encoding="utf-8") as handle:
+            data = json.load(handle)
+        assert data["schema_version"] == APP_VERSION
 
     def test_adds_to_recent_projects(self, tmp_path):
         project = ProjectModel()

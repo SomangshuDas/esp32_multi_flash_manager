@@ -24,7 +24,7 @@ from app.utilities.constants import (
     DEFAULT_BAUD, DEFAULT_CHIP, DEFAULT_FLASH_FREQ,
     DEFAULT_FLASH_MODE, DEFAULT_FLASH_SIZE,
 )
-from app.utilities.helpers import get_app_data_dir, safe_filename
+from app.utilities.helpers import clear_file_hidden, get_app_data_dir, mark_file_hidden, safe_filename
 
 logger = get_logger(__name__)
 
@@ -122,7 +122,9 @@ def _atomic_write_json(file_path: Path, data: dict[str, Any]) -> None:
         json.dump(data, handle, indent=2, ensure_ascii=False)
         handle.flush()
         os.fsync(handle.fileno())
+    mark_file_hidden(tmp_path)
     os.replace(tmp_path, file_path)
+    clear_file_hidden(file_path)
 
 
 def save_profile(profile: FirmwareProfile) -> None:
