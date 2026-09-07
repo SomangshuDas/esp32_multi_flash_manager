@@ -129,14 +129,14 @@ jobs:
         run: bash packaging/linux/build_appimage.sh "${{ steps.version.outputs.version }}"
 
       - name: Upload raw build asset to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: ${{ matrix.asset_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload installer asset to GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/installer/*
         env:
