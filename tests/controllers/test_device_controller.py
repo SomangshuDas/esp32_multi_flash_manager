@@ -138,6 +138,63 @@ class TestApplyFirmwareToDevices:
         assert controller.apply_firmware_to_devices([], self._entries()) == 0
 
 
+class _FakeFlashController:
+    """Stand-in for FlashController.is_busy() that never actually launches
+    a worker -- just enough for DeviceController's busy-guard to consult."""
+
+    def __init__(self, busy_ids: set[str]):
+        self._busy_ids = busy_ids
+
+    def is_busy(self, device_id: str) -> bool:
+        return device_id in self._busy_ids
+
+
+class TestBusyDeviceGuard:
+    """
+    Traceability bug fix: apply_to_all/apply_to_selected/
+    apply_firmware_to_devices used to mutate a DeviceConfig regardless of
+    whether FlashController.is_busy() was true for it. Because FlashWorker
+    holds a live reference to that same object, renaming a device or
+    reassigning its port mid-flash via Batch Edit made the resulting
+    history entry reflect the new values rather than what was actually
+    flashed. These tests confirm the guard closes that race.
+    """
+
+    def _entries(self):
+        return [FirmwareEntry(file_path="/tmp/firmware.bin", address="0x10000")]
+
+    def test_apply_to_all_skips_busy_device(self, controller):
+        a = controller.add_device("A")
+        b = controller.add_device("B")
+        controller.set_flash_controller(_FakeFlashController({a.id}))
+        controller.apply_to_all("baud_rate", 921600)
+        assert a.baud_rate != 921600
+        assert b.baud_rate == 921600
+
+    def test_apply_to_selected_skips_busy_device(self, controller):
+        a = controller.add_device("A")
+        controller.set_flash_controller(_FakeFlashController({a.id}))
+        controller.apply_to_selected([a.id], "baud_rate", 230400)
+        assert a.baud_rate != 230400
+
+    def test_apply_firmware_to_devices_skips_busy_device_and_excludes_from_count(self, controller):
+        a = controller.add_device("A")
+        b = controller.add_device("B")
+        controller.set_flash_controller(_FakeFlashController({a.id}))
+        updated = controller.apply_firmware_to_devices([a.id, b.id], self._entries())
+        assert updated == 1
+        assert a.firmware == []
+        assert len(b.firmware) == 1
+
+    def test_no_flash_controller_wired_means_no_guard(self, controller):
+        """Backward compatible: with no FlashController wired in (e.g. a
+        controller built without main_window's wiring), nothing is
+        treated as busy."""
+        a = controller.add_device("A")
+        controller.apply_to_all("baud_rate", 921600)
+        assert a.baud_rate == 921600
+
+
 class TestFindDuplicatePorts:
     def test_no_duplicates_returns_empty(self, controller):
         controller.add_device("A").com_port = "COM3"

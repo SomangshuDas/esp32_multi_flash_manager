@@ -1,8 +1,11 @@
 # ESP32 Multi Flash Manager
+<!-- APP_VERSION: 0.13.0 -->
 
 A production-grade, cross-platform desktop application for flashing
-firmware onto an **unlimited number of ESP32 devices in parallel**, built
-on top of the official [`esptool`](https://github.com/espressif/esptool)
+firmware onto a bench of ESP32 devices in parallel — with a
+configurable concurrency cap and automatic queuing so large batches
+don't overwhelm the OS or the USB bus — built on top of the official
+[`esptool`](https://github.com/espressif/esptool)
 backend (plus its `espsecure`/`espefuse` companion tools for flash
 encryption, secure boot, and eFuse operations) for reliability.
 
@@ -31,9 +34,12 @@ implementation for correctness.
   has its own port, chip type, baud rate, flash mode/frequency/size, and
   boolean flags (erase / reset / compression / stub loader), plus
   a free-text custom-arguments field for power users.
-- **True parallel flashing.** Every device you upload to gets its own
-  worker thread and its own `esptool` subprocess — a slow or stuck board
-  never blocks the others, and the UI never freezes.
+- **Parallel flashing with a safety cap.** Every device you upload to
+  gets its own worker thread and its own `esptool` subprocess, up to a
+  configurable "Max Parallel Flashes" limit (Settings → General, default
+  8) — a slow or stuck board never blocks the others, the UI never
+  freezes, and a bench of dozens of devices queues automatically instead
+  of launching every subprocess at once.
 - **Automatic firmware detection.** Point the app at a build output folder
   and it recognizes `bootloader.bin`, `partition-table.bin`,
   `ota_data_initial.bin`, `boot_app0.bin`, `firmware.bin`, etc. and assigns
@@ -301,7 +307,7 @@ goes.
 | **Operating systems** | Windows, macOS, Linux | Windows only (7/10) |
 | **Source / license** | Open source (MIT); esptool/espefuse/espsecure remain separate GPLv2 dependencies | Closed-source freeware; no source available |
 | **Underlying flashing implementation** | Drives the official `esptool` as a subprocess — no protocol logic reimplemented | Espressif's own standalone implementation, distinct from `esptool.py` |
-| **Parallel/batch flashing** | Unlimited devices, each with its own thread and `esptool` subprocess | `FactoryMultiDownload` mode, documented up to 20 devices per session |
+| **Parallel/batch flashing** | Configurable cap (default 8, adjustable 1–64) with automatic queuing beyond it, each device its own thread and `esptool` subprocess | `FactoryMultiDownload` mode, documented up to 20 devices per session |
 | **Per-device configuration** | Independent chip type, baud, flash mode/frequency/size, and custom arguments per device, editable anytime | One shared `SPI Flash Config` per session; `Factory` mode locks it by default to prevent accidental changes |
 | **Firmware auto-detection** | Recognizes `bootloader.bin`, `partition-table.bin`, `firmware.bin`, etc. and assigns standard addresses automatically | None — each path and address is entered manually per slot |
 | **Saved project / bench configuration** | `.emfm` JSON project files (devices, firmware, settings, layout); reopening with missing files flags them for relinking | No project file format; `Factory` mode persists via the tool's own `bin/` folder layout and `.conf` files |
@@ -500,6 +506,12 @@ Found a security issue rather than a regular bug — especially anything
 touching flash-encryption/secure-boot key handling or eFuse-burning
 confirmations? Please follow [`SECURITY.md`](SECURITY.md) instead of
 opening a public issue.
+
+Also see [`docs/PRIVACY.md`](docs/PRIVACY.md) for what data (if any)
+leaves your device, [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md) for
+current screen-reader/keyboard-navigation conformance and known gaps,
+and [`docs/MAINTENANCE_POLICY.md`](docs/MAINTENANCE_POLICY.md) for how
+this single-maintainer project plans to handle maintainer unavailability.
 
 ## License
 

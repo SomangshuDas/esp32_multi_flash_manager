@@ -12,9 +12,11 @@ This module owns:
     is even invoked, with clear per-issue messages -- mirroring
     app/flash_engine/validator.py's pre-upload checks.
   - run_merge: builds the esptool command (via FlashCommandBuilder) and
-    runs it synchronously (merging is a fast, local, CPU/disk-bound
-    operation, not a multi-minute serial transfer, so this deliberately
-    does NOT need its own QThread worker the way flashing does).
+    runs it synchronously. Kept for callers that already run off the GUI
+    thread (and for this module's own test suite); the Merge Bins dialog
+    itself no longer calls this directly -- see app/workers/merge_worker.py
+    (MergeWorker), which runs the same esptool invocation on a background
+    QThread so a large/slow merge no longer freezes the GUI.
 """
 
 from __future__ import annotations
@@ -191,10 +193,10 @@ def run_merge(
 ) -> MergeResult:
     """
     Run `esptool --chip <chip> merge-bin` synchronously and return the
-    result. Callers (the Merge Bins dialog) are expected to have already
-    validated with validate_merge_entries() and to show a busy cursor
-    around this call, since it blocks the calling thread for the (usually
-    sub-second, at most a few seconds) duration of the merge.
+    result. Kept for any non-GUI caller and for this module's own test
+    suite; the Merge Bins dialog itself uses MergeWorker (a background
+    QThread -- see app/workers/merge_worker.py) instead, since this
+    function blocks the calling thread for the duration of the merge.
     """
     address_file_pairs = [(entry.address, entry.file_path) for entry in entries]
     command = FlashCommandBuilder.build_merge_bin_args(

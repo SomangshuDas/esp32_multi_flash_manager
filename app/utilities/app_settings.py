@@ -34,7 +34,11 @@ from app.utilities.constants import (
     FLASH_STALL_TIMEOUT_MAX_SECONDS,
     FLASH_STALL_TIMEOUT_MIN_SECONDS,
     FLASH_STALL_TIMEOUT_SECONDS,
+    MAX_PARALLEL_FLASHES,
+    MAX_PARALLEL_FLASHES_MAX,
+    MAX_PARALLEL_FLASHES_MIN,
     SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS,
+    SETTINGS_KEY_MAX_PARALLEL_FLASHES,
 )
 from app.utilities.helpers import clear_file_hidden, get_app_data_dir, mark_file_hidden
 
@@ -170,3 +174,24 @@ def get_flash_stall_timeout_seconds() -> float:
     if value != value:  # NaN guard (NaN != NaN)
         return FLASH_STALL_TIMEOUT_SECONDS
     return max(FLASH_STALL_TIMEOUT_MIN_SECONDS, min(FLASH_STALL_TIMEOUT_MAX_SECONDS, value))
+
+
+def get_max_parallel_flashes() -> int:
+    """
+    Return the configured cap on how many devices FlashController.start_batch()
+    will run concurrently (see Settings -> General -> "Max parallel flashes").
+
+    Previously unbounded: a very large batch launched one QThread + one
+    esptool subprocess per device simultaneously, risking OS thread,
+    file-descriptor, or USB-bandwidth exhaustion. Falls back to the
+    MAX_PARALLEL_FLASHES default, and clamps to
+    [MAX_PARALLEL_FLASHES_MIN, MAX_PARALLEL_FLASHES_MAX] so a
+    corrupted/hand-edited settings.json value can't produce a nonsensical
+    (zero, negative, or absurdly high) cap.
+    """
+    settings = get_settings()
+    try:
+        value = int(settings.value(SETTINGS_KEY_MAX_PARALLEL_FLASHES, MAX_PARALLEL_FLASHES))
+    except (TypeError, ValueError):
+        return MAX_PARALLEL_FLASHES
+    return max(MAX_PARALLEL_FLASHES_MIN, min(MAX_PARALLEL_FLASHES_MAX, value))

@@ -15,7 +15,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTabWidget,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -39,10 +39,14 @@ from app.utilities.constants import (
     FLASH_STALL_TIMEOUT_MAX_SECONDS,
     FLASH_STALL_TIMEOUT_MIN_SECONDS,
     FLASH_STALL_TIMEOUT_SECONDS,
+    MAX_PARALLEL_FLASHES,
+    MAX_PARALLEL_FLASHES_MAX,
+    MAX_PARALLEL_FLASHES_MIN,
     MERGE_POST_ACTION_LABELS,
     MERGE_POST_ACTIONS,
     SETTINGS_KEY_AUTOSAVE_INTERVAL,
     SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS,
+    SETTINGS_KEY_MAX_PARALLEL_FLASHES,
     SETTINGS_KEY_MERGE_DEFAULT_FILENAME,
     SETTINGS_KEY_MERGE_DEFAULT_LOCATION,
     SETTINGS_KEY_MERGE_POST_ACTION,
@@ -115,6 +119,18 @@ class SettingsDialog(QDialog):
             float(self.settings.value(SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS, FLASH_STALL_TIMEOUT_SECONDS))
         )
         form.addRow("Flash Stall Timeout:", self.stall_timeout_spin)
+
+        self.max_parallel_spin = QSpinBox()
+        self.max_parallel_spin.setRange(MAX_PARALLEL_FLASHES_MIN, MAX_PARALLEL_FLASHES_MAX)
+        self.max_parallel_spin.setToolTip(
+            "How many devices can flash at the same time. Devices beyond this cap wait in a "
+            "queue and start automatically as running devices finish, instead of all launching "
+            "at once (which can exhaust USB bandwidth or OS threads on a large bench)."
+        )
+        self.max_parallel_spin.setValue(
+            int(self.settings.value(SETTINGS_KEY_MAX_PARALLEL_FLASHES, MAX_PARALLEL_FLASHES))
+        )
+        form.addRow("Max Parallel Flashes:", self.max_parallel_spin)
 
         # ---- Auto-Save ----
         self.autosave_combo = QComboBox()
@@ -242,6 +258,7 @@ class SettingsDialog(QDialog):
         self.settings.setValue("default_baud", int(self.baud_combo.currentText()))
         self.settings.setValue("default_flash_mode", self.flash_mode_combo.currentText())
         self.settings.setValue(SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS, self.stall_timeout_spin.value())
+        self.settings.setValue(SETTINGS_KEY_MAX_PARALLEL_FLASHES, self.max_parallel_spin.value())
         self.settings.setValue(SETTINGS_KEY_AUTOSAVE_INTERVAL, int(self.autosave_combo.currentData()))
         self.settings.setValue(SETTINGS_KEY_MERGE_DEFAULT_FILENAME, self.merge_filename_edit.text().strip() or DEFAULT_MERGED_BIN_FILENAME)
         self.settings.setValue(SETTINGS_KEY_MERGE_DEFAULT_LOCATION, self.merge_location_edit.text().strip())

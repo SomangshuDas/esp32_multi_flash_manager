@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.12.0"
+APP_VERSION = "0.13.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -89,6 +89,10 @@ KNOWN_FIRMWARE_ADDRESSES: dict[str, str] = {
 # Device status enum values (kept as plain strings for JSON-friendliness)
 # --------------------------------------------------------------------------
 STATUS_WAITING = "Waiting"
+# A device sitting behind the parallel-flash cap (see
+# MAX_PARALLEL_FLASHES / FlashController._queue below): eligible and about
+# to run, but not yet handed a worker/subprocess.
+STATUS_QUEUED = "Queued"
 STATUS_PREPARING = "Preparing"
 STATUS_CONNECTING = "Connecting"
 STATUS_ERASING = "Erasing"
@@ -100,6 +104,7 @@ STATUS_FAILED = "Failed"
 
 STATUS_COLORS = {
     STATUS_WAITING: "#8a8f98",
+    STATUS_QUEUED: "#7048e8",
     STATUS_PREPARING: "#5b8def",
     STATUS_CONNECTING: "#5b8def",
     STATUS_ERASING: "#e0a300",
@@ -134,6 +139,20 @@ FLASH_STALL_TIMEOUT_SECONDS = 45.0
 SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS = "flash_stall_timeout_seconds"
 FLASH_STALL_TIMEOUT_MIN_SECONDS = 10.0
 FLASH_STALL_TIMEOUT_MAX_SECONDS = 600.0
+
+# --------------------------------------------------------------------------
+# Reliability: cap on how many devices FlashController.start_batch() will
+# run concurrently. Previously unbounded -- a very large batch (dozens or
+# more devices) launched one QThread + one esptool subprocess per device
+# all at once, risking OS thread, file-descriptor, or USB-bandwidth
+# exhaustion. Devices beyond this cap are queued (STATUS_QUEUED) and
+# launched one-for-one as running workers finish. Configurable from
+# Settings -> General; see app.utilities.app_settings.get_max_parallel_flashes.
+# --------------------------------------------------------------------------
+MAX_PARALLEL_FLASHES = 8
+SETTINGS_KEY_MAX_PARALLEL_FLASHES = "max_parallel_flashes"
+MAX_PARALLEL_FLASHES_MIN = 1
+MAX_PARALLEL_FLASHES_MAX = 64
 
 # Same idea as FLASH_STALL_TIMEOUT_SECONDS above but for the read-only
 # eFuse-burning/provisioning subprocess (app/workers/security_worker.py) --

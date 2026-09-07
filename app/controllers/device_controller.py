@@ -9,6 +9,8 @@ call in response to user actions.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import QObject, Signal
 
 from app.logging_setup.logger import get_logger
@@ -16,6 +18,9 @@ from app.models.device_model import DeviceConfig
 from app.models.project_model import ProjectModel
 from app.utilities.app_settings import get_settings
 from app.utilities.constants import DEFAULT_BAUD, DEFAULT_FLASH_MODE
+
+if TYPE_CHECKING:
+    from app.controllers.flash_controller import FlashController
 
 logger = get_logger(__name__)
 
@@ -38,6 +43,27 @@ class DeviceController(QObject):
     def __init__(self, project: ProjectModel, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.project = project
+        # Traceability bug fix: apply_to_all/apply_to_selected/
+        # apply_firmware_to_devices used to mutate a DeviceConfig
+        # regardless of whether FlashController.is_busy() was true for it.
+        # Because FlashWorker holds a live reference to that same object,
+        # renaming a device or reassigning its port mid-flash via Batch
+        # Edit made the resulting history entry reflect the *new* values
+        # rather than what was actually flashed. When a FlashController is
+        # wired in (see set_flash_controller / main_window.py wiring),
+        # the three batch-mutation methods below skip busy devices instead
+        # of silently corrupting their in-flight history record.
+        self._flash_controller: "FlashController | None" = None
+
+    # ------------------------------------------------------------------
+    def set_flash_controller(self, flash_controller: "FlashController") -> None:
+        """Wire in the FlashController used to guard batch-mutation methods
+        against editing a device that's currently mid-flash. See the
+        docstring on __init__ for the bug this closes."""
+        self._flash_controller = flash_controller
+
+    def _is_device_busy(self, device_id: str) -> bool:
+        return self._flash_controller is not None and self._flash_controller.is_busy(device_id)
 
     # ------------------------------------------------------------------
     def set_project(self, project: ProjectModel) -> None:
@@ -97,20 +123,38 @@ class DeviceController(QObject):
         Batch-edit helper: set `predicate_field` to `value` on every device
         in the project, then emit device_updated for each. Used by the
         Batch Editing dialog (e.g. set baud_rate=115200 for all devices).
+        Devices currently mid-flash (FlashController.is_busy()) are
+        skipped -- see __init__ docstring for why.
         """
+        skipped = 0
         for device in self.project.devices:
+            if self._is_device_busy(device.id):
+                skipped += 1
+                continue
             if hasattr(device, predicate_field):
                 setattr(device, predicate_field, value)
                 self.device_updated.emit(device.id)
         logger.info("Batch-applied %s=%s to %d device(s)", predicate_field, value, len(self.project.devices))
+        if skipped:
+            logger.warning(
+                "Skipped %d device(s) mid-flash while batch-applying %s", skipped, predicate_field
+            )
 
     def apply_to_selected(self, device_ids: list[str], predicate_field: str, value) -> None:
+        skipped = 0
         for device_id in device_ids:
+            if self._is_device_busy(device_id):
+                skipped += 1
+                continue
             device = self.get_device(device_id)
             if device is not None and hasattr(device, predicate_field):
                 setattr(device, predicate_field, value)
                 self.device_updated.emit(device.id)
         logger.info("Batch-applied %s=%s to %d selected device(s)", predicate_field, value, len(device_ids))
+        if skipped:
+            logger.warning(
+                "Skipped %d selected device(s) mid-flash while batch-applying %s", skipped, predicate_field
+            )
 
     def apply_firmware_to_devices(self, device_ids: list[str], entries: list) -> int:
         """
@@ -121,10 +165,16 @@ class DeviceController(QObject):
         selected subset) in one step instead of re-importing per device.
         Each device gets its own `FirmwareEntry.duplicate()`s (fresh ids)
         so editing one device's addresses later never mutates another
-        device's copy. Returns the number of devices updated.
+        device's copy. Returns the number of devices updated. Devices
+        currently mid-flash (FlashController.is_busy()) are skipped -- see
+        __init__ docstring for why.
         """
         updated = 0
+        skipped = 0
         for device_id in device_ids:
+            if self._is_device_busy(device_id):
+                skipped += 1
+                continue
             device = self.get_device(device_id)
             if device is None:
                 continue
@@ -132,6 +182,8 @@ class DeviceController(QObject):
             self.device_updated.emit(device.id)
             updated += 1
         logger.info("Applied firmware set (%d file(s)) to %d device(s)", len(entries), updated)
+        if skipped:
+            logger.warning("Skipped %d device(s) mid-flash while applying firmware set", skipped)
         return updated
 
     # ------------------------------------------------------------------

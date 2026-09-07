@@ -196,6 +196,34 @@ class TestLegacyProjectFileSupport:
         assert controller.current_file_path is None
         assert controller.dirty is True
 
+    def test_opening_legacy_file_sets_legacy_pending_migration(self, controller, tmp_path):
+        path = self._save_as_legacy(controller, tmp_path)
+        controller.open_project(str(path))
+        assert controller.legacy_pending_migration is True
+
+    def test_opening_current_format_file_does_not_set_legacy_pending_migration(self, controller, tmp_path):
+        path = tmp_path / "current.emfm"
+        controller.save_project(str(path))
+        controller.new_project()
+        controller.open_project(str(path))
+        assert controller.legacy_pending_migration is False
+
+    def test_save_as_after_legacy_open_clears_legacy_pending_migration(self, controller, tmp_path):
+        old_path = self._save_as_legacy(controller, tmp_path)
+        controller.open_project(str(old_path))
+        assert controller.legacy_pending_migration is True
+
+        controller.save_project(str(tmp_path / "resaved.emfm"))
+        assert controller.legacy_pending_migration is False
+
+    def test_new_project_clears_legacy_pending_migration(self, controller, tmp_path):
+        path = self._save_as_legacy(controller, tmp_path)
+        controller.open_project(str(path))
+        assert controller.legacy_pending_migration is True
+
+        controller.new_project()
+        assert controller.legacy_pending_migration is False
+
 
 class TestAutosave:
     """

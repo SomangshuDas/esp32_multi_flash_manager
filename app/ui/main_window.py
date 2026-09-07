@@ -134,6 +134,10 @@ class MainWindow(QMainWindow):
         self.project_controller = ProjectController(self)
         self.device_controller = DeviceController(self.project_controller.project, self)
         self.flash_controller = FlashController(self)
+        # Lets DeviceController's batch-mutation methods (apply_to_all,
+        # apply_to_selected, apply_firmware_to_devices) refuse to touch a
+        # device that's currently mid-flash -- see DeviceController.__init__.
+        self.device_controller.set_flash_controller(self.flash_controller)
         self.port_watcher = PortWatcher(self)
 
         self._live_consoles: dict[str, LiveConsoleWidget] = {}
@@ -1001,12 +1005,46 @@ class MainWindow(QMainWindow):
         )
         return result == QMessageBox.StandardButton.Yes
 
+    def _confirm_legacy_migration_before_proceeding(self) -> bool:
+        """
+        Forced-save guard for legacy `.efmproj` projects (see
+        docs/USER_MANUAL.md "Forced save for legacy projects" and
+        ProjectController.legacy_pending_migration). A project opened
+        from the legacy format and never yet Saved As to `.emfm` must be
+        saved -- or the action cancelled -- before closing the app,
+        opening another project, or starting a new one; unlike
+        _confirm_discard_changes, there is no "discard" option here,
+        since discarding wouldn't just lose recent edits, it would mean
+        this specific `.efmproj` file quietly never gets migrated at all.
+        Returns True if it's now safe to proceed (nothing was pending, or
+        the forced Save As just completed successfully).
+        """
+        if not self.project_controller.legacy_pending_migration:
+            return True
+        choice = QMessageBox.warning(
+            self, "Legacy Project Needs Migration",
+            f"This project was opened from an older ."
+            f"{PROJECT_FILE_EXTENSION_LEGACY} file and hasn't been saved as a "
+            f".{PROJECT_FILE_EXTENSION} file yet.\n\n"
+            "It needs to be saved before you continue, so it doesn't end up "
+            "quietly left behind in the old format.",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+        )
+        if choice != QMessageBox.StandardButton.Save:
+            return False
+        self._on_save_project_as()
+        return not self.project_controller.legacy_pending_migration
+
     def _on_new_project(self) -> None:
+        if not self._confirm_legacy_migration_before_proceeding():
+            return
         if not self._confirm_discard_changes():
             return
         self.project_controller.new_project()
 
     def _on_open_project(self, file_path: str | None = None) -> None:
+        if not self._confirm_legacy_migration_before_proceeding():
+            return
         if not self._confirm_discard_changes():
             return
         if not file_path:
@@ -1128,7 +1166,10 @@ class MainWindow(QMainWindow):
             f"{APP_NAME} (the .{PROJECT_FILE_EXTENSION_LEGACY} format).\n\n"
             f"It's been opened, but to continue you'll need to save it as a new "
             f".{PROJECT_FILE_EXTENSION} file — use File → Save Project (or Save "
-            "Project As).",
+            "Project As).\n\n"
+            f"Note: support for opening .{PROJECT_FILE_EXTENSION_LEGACY} files "
+            "may be discontinued in a future release, so it's worth migrating "
+            "any remaining old project files soon.",
         )
 
     def _on_project_lock_warning(self, message: str) -> None:
@@ -1534,6 +1575,10 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self.flash_controller.cancel_all()
+
+        if not self._confirm_legacy_migration_before_proceeding():
+            event.ignore()
+            return
 
         if not self._confirm_discard_changes():
             event.ignore()

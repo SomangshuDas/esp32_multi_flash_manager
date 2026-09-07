@@ -157,8 +157,11 @@ flashable `.bin`, using `esptool`'s own `merge-bin` command:
      nothing changes in the Firmware panel.
    The option shown by default here comes from **Settings → Default
    Post-Merge Action**.
-6. Click **Merge**. Merging runs entirely offline (no device connection
-   needed) and normally finishes in well under a second.
+6. Click **Merge**. The merge runs on a background thread, so the app
+   stays responsive — normally it finishes in well under a second, but on
+   a large image set a **Cancel Merge** button appears next to an
+   in-progress indicator, letting you stop it early instead of waiting
+   out the full operation.
 
 ## 5. Flash Encryption & Secure Boot (Security tab)
 
@@ -306,10 +309,14 @@ either disable the separate bootloader/partition-table rows and flash
 only the merged image at `0x0`, or don't enable the `0x0` merged image
 alongside them.
 
-Once underway, each device flashes independently and in parallel: its own
-status badge walks through *Waiting → Preparing → Connecting → Erasing →
-Uploading → Verifying → Completed* (or *Failed*/*Cancelled*), its own
-progress bar fills, and its own elapsed/ETA/speed columns update live.
+Once underway, each device flashes independently and in parallel, up to
+the "Max Parallel Flashes" cap set in Settings → General (default 8);
+devices beyond that cap show a *Queued* badge and start automatically as
+running devices finish, instead of every device launching at once. Each
+device's own status badge walks through *Waiting → Preparing →
+Connecting → Erasing → Uploading → Verifying → Completed* (or
+*Failed*/*Cancelled*), its own progress bar fills, and its own
+elapsed/ETA/speed columns update live.
 
 If a device disconnects mid-upload and never responds again (the flash
 never completes, errors, or times out), the app now abandons that
@@ -421,6 +428,23 @@ far as their original file goes — the app never silently overwrites an
 **Save As...** instead, so you explicitly choose a new `.emfm` location
 rather than an old file quietly being left in the legacy format (or an
 old copy quietly surviving next to a new one you didn't ask for).
+Support for opening `.efmproj` files at all may be discontinued in a
+future release, so it's worth migrating any remaining old project files
+to `.emfm` sooner rather than later. To reduce the risk of one being
+missed, the app also forces a save-back-to-disk of a still-legacy
+project before it lets you close it, switch to another project, or run
+File → New — see "Forced save for legacy projects" below.
+
+**Forced save for legacy projects.** Because a project opened from
+`.efmproj` keeps `Save` routed to `Save As...` (rather than silently
+overwriting the old file — see above), it's possible to make edits and
+then close the app, switch projects, or start a new one without ever
+completing that Save As. To avoid quietly losing those edits or leaving
+a project stuck in the old format, the app checks for this specific
+situation — an `.efmproj`-sourced project with unsaved changes — at
+those three exit points and prompts you to save it (via Save As) before
+continuing, the same way it already prompts for any other unsaved
+changes.
 
 **Opening the same project from two places at once.** If you (or a
 teammate) open the same project file from a shared network drive while
@@ -506,6 +530,11 @@ weeks later.
 - **Flash Stall Timeout** — how long (in seconds) a flash or read
   operation can go with no output before it's treated as an
   unresponsive/disconnected device and aborted (default 45s).
+- **Max Parallel Flashes** — how many devices can flash at the same time
+  (default 8, adjustable 1–64). Devices beyond this cap show a *Queued*
+  status and start automatically as running devices finish, instead of
+  all launching at once — protects against exhausting OS threads or USB
+  bandwidth on a large bench.
 - **Bin Merge defaults** — default merged filename, default output
   location (leave blank to always use the same folder as `firmware.bin`),
   and the default **Post-Merge Action** pre-selected in the Merge Bins

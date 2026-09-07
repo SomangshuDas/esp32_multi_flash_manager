@@ -270,3 +270,72 @@ class TestBusyGuardDuringBatch:
 
         controller.cancel_all()
         qtbot.waitSignal(controller.batch_finished, timeout=5000).wait()
+
+
+def _make_device(tmp_path, name, com_port):
+    fw_path = tmp_path / f"{name}.bin"
+    fw_path.write_bytes(b"\x00" * 16)
+    device = DeviceConfig(name=name, com_port=com_port, chip_type="esp32")
+    entry = FirmwareEntry(file_path=str(fw_path), address="0x10000")
+    entry.refresh()
+    device.add_firmware(entry)
+    return device
+
+
+class TestParallelFlashCapEndToEnd:
+    """
+    Reliability fix: FlashController.start_batch() used to launch one
+    QThread + one esptool subprocess per device with no limit. These drive
+    real FlashWorker QThreads (mocked serial, as in the rest of this file)
+    against a FlashController capped to 1 concurrent device.
+    """
+
+    def test_second_device_is_queued_then_launched_once_the_first_finishes(self, qtbot, monkeypatch, tmp_path):
+        from app.controllers.flash_controller import FlashController
+        from app.utilities.constants import STATUS_QUEUED
+
+        monkeypatch.setattr(
+            flash_worker_module, "FlashProcess",
+            make_fake_flash_process(SUCCESSFUL_SESSION_LINES, return_code=0, block_after=2),
+        )
+        controller = FlashController(max_parallel=1)
+        device_a = _make_device(tmp_path, "A", "COM3")
+        device_b = _make_device(tmp_path, "B", "COM4")
+
+        with qtbot.waitSignal(controller.batch_started, timeout=5000):
+            controller.start_batch([device_a, device_b])
+        qtbot.wait(100)
+
+        # Only the cap's worth of devices actually get a worker; the rest
+        # sit in the queue (STATUS_QUEUED) but still read as busy so a
+        # second start_batch() call can't double-launch them.
+        assert device_b.runtime.status == STATUS_QUEUED
+        assert controller.is_busy(device_a.id) is True
+        assert controller.is_busy(device_b.id) is True
+
+        with qtbot.waitSignal(controller.batch_finished, timeout=5000) as blocker:
+            controller.cancel_all()
+
+        succeeded, failed = blocker.args
+        assert succeeded == 0
+        assert failed == 2  # A cancelled mid-flash, B cancelled while queued
+
+    def test_all_devices_eventually_complete_despite_cap_of_one(self, qtbot, monkeypatch, tmp_path):
+        from app.controllers.flash_controller import FlashController
+
+        monkeypatch.setattr(
+            flash_worker_module, "FlashProcess",
+            make_fake_flash_process(SUCCESSFUL_SESSION_LINES, return_code=0),
+        )
+        controller = FlashController(max_parallel=1)
+        device_a = _make_device(tmp_path, "A", "COM3")
+        device_b = _make_device(tmp_path, "B", "COM4")
+
+        with qtbot.waitSignal(controller.batch_finished, timeout=5000) as blocker:
+            controller.start_batch([device_a, device_b])
+
+        succeeded, failed = blocker.args
+        assert succeeded == 2
+        assert failed == 0
+        assert controller.is_busy(device_a.id) is False
+        assert controller.is_busy(device_b.id) is False

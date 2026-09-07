@@ -16,7 +16,8 @@ from PySide6.QtCore import QObject, Signal
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
 from app.models.history_model import HistoryEntry
-from app.utilities.constants import STATUS_WAITING
+from app.utilities.app_settings import get_max_parallel_flashes
+from app.utilities.constants import STATUS_CANCELLED, STATUS_QUEUED, STATUS_WAITING
 from app.utilities.read_output_parser import extract_mac_address
 from app.workers.flash_worker import FlashWorker
 
@@ -46,8 +47,19 @@ class FlashController(QObject):
     batch_finished = Signal(int, int)
     history_entry_created = Signal(object)
 
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(self, parent: QObject | None = None, *, max_parallel: int | None = None) -> None:
         super().__init__(parent)
+        # Reliability: FlashController.start_batch() used to launch one
+        # QThread + one esptool subprocess per device with no limit, so a
+        # very large batch (dozens or more) fired all of them at once,
+        # risking OS thread, file-descriptor, or USB-bandwidth exhaustion
+        # instead of queuing. Devices beyond the parallel-flash cap are
+        # now held in _queue (STATUS_QUEUED) and launched one-for-one as
+        # running workers finish. `max_parallel` overrides the
+        # user-configurable setting (see app_settings.get_max_parallel_flashes)
+        # -- mainly useful for tests that want a deterministic cap.
+        self._max_parallel_override = max_parallel
+        self._queue: list[DeviceConfig] = []
         self._workers: dict[str, FlashWorker] = {}
         # Authoritative busy state, set/cleared by the controller itself
         # on the main thread (see _launch_worker/_on_worker_finished).
@@ -71,7 +83,14 @@ class FlashController(QObject):
         self._device_macs: dict[str, str] = {}
 
     # ------------------------------------------------------------------
+    def _resolve_max_parallel(self) -> int:
+        if self._max_parallel_override is not None:
+            return max(1, self._max_parallel_override)
+        return get_max_parallel_flashes()
+
     def is_busy(self, device_id: str) -> bool:
+        if any(device.id == device_id for device in self._queue):
+            return True
         worker = self._workers.get(device_id)
         if worker is None:
             return False
@@ -80,11 +99,16 @@ class FlashController(QObject):
         return worker.isRunning()
 
     def any_busy(self) -> bool:
+        if self._queue:
+            return True
         return any(self.is_busy(device_id) for device_id in self._workers)
 
     # ------------------------------------------------------------------
     def start_batch(self, devices: list[DeviceConfig]) -> None:
-        """Launch one FlashWorker thread per device, all running concurrently."""
+        """Launch one FlashWorker thread per device, up to the parallel-flash
+        cap (see app_settings.get_max_parallel_flashes); any remaining
+        devices are queued (STATUS_QUEUED) and launched one-for-one as
+        running workers finish, instead of all firing at once."""
         eligible = [d for d in devices if not self.is_busy(d.id)]
         if not eligible:
             return
@@ -93,9 +117,18 @@ class FlashController(QObject):
         self._batch_results = {}
         self._batch_start_time = time.monotonic()
         self.batch_started.emit(self._batch_size)
-        logger.info("Starting parallel flash batch: %d device(s)", self._batch_size)
 
-        for device in eligible:
+        max_parallel = self._resolve_max_parallel()
+        to_launch, to_queue = eligible[:max_parallel], eligible[max_parallel:]
+        logger.info(
+            "Starting parallel flash batch: %d device(s) (%d launched now, %d queued, cap=%d)",
+            self._batch_size, len(to_launch), len(to_queue), max_parallel,
+        )
+
+        for device in to_queue:
+            device.runtime.status = STATUS_QUEUED
+            self._queue.append(device)
+        for device in to_launch:
             device.runtime.status = STATUS_WAITING
             self._launch_worker(device)
 
@@ -103,14 +136,57 @@ class FlashController(QObject):
         self.start_batch([device])
 
     def cancel(self, device_id: str) -> None:
+        for index, device in enumerate(self._queue):
+            if device.id == device_id:
+                del self._queue[index]
+                logger.info("Cancel requested for queued device %s", device_id)
+                self._finish_queued_device(device, cancelled=True)
+                return
         worker = self._workers.get(device_id)
         if worker is not None and worker.isRunning():
             logger.info("Cancel requested for device %s", device_id)
             worker.request_cancel()
 
     def cancel_all(self) -> None:
+        for device in list(self._queue):
+            self.cancel(device.id)
         for device_id in list(self._workers.keys()):
             self.cancel(device_id)
+
+    # ------------------------------------------------------------------
+    def _finish_queued_device(self, device: DeviceConfig, *, cancelled: bool) -> None:
+        """Resolve a device that never got a worker launched because it was
+        cancelled while still sitting in the parallel-flash queue."""
+        device_id = device.id
+        device.runtime.status = STATUS_CANCELLED
+        self.device_status_changed.emit(device_id, STATUS_CANCELLED)
+        message = "Cancelled while queued (parallel-flash limit)."
+        self.device_finished.emit(device_id, False, message, 0.0)
+        self._batch_results[device_id] = False
+        entry = HistoryEntry.create(
+            device.name, device.com_port,
+            ", ".join(f.file_name for f in device.enabled_firmware()),
+            0.0, "Cancelled", device_id=device_id, mac_address="",
+        )
+        self.history_entry_created.emit(entry)
+        # Note: unlike _on_worker_finished, this does NOT free up a running
+        # slot (the device never had a worker), so it must not trigger
+        # _launch_next_queued() -- doing so would exceed the parallel cap.
+        self._maybe_finish_batch()
+
+    def _launch_next_queued(self) -> None:
+        if not self._queue:
+            return
+        device = self._queue.pop(0)
+        device.runtime.status = STATUS_WAITING
+        self._launch_worker(device)
+
+    def _maybe_finish_batch(self) -> None:
+        if len(self._batch_results) >= self._batch_size:
+            succeeded = sum(1 for ok in self._batch_results.values() if ok)
+            failed = self._batch_size - succeeded
+            logger.info("Batch finished: %d succeeded, %d failed", succeeded, failed)
+            self.batch_finished.emit(succeeded, failed)
 
     # ------------------------------------------------------------------
     def _launch_worker(self, device: DeviceConfig) -> None:
@@ -163,11 +239,12 @@ class FlashController(QObject):
         )
         self.history_entry_created.emit(entry)
 
-        if len(self._batch_results) >= self._batch_size:
-            succeeded = sum(1 for ok in self._batch_results.values() if ok)
-            failed = self._batch_size - succeeded
-            logger.info("Batch finished: %d succeeded, %d failed", succeeded, failed)
-            self.batch_finished.emit(succeeded, failed)
+        # A slot the finished worker frees up: pull the next queued device
+        # (if any) into it before checking whether the whole batch is done,
+        # so batch_finished only fires once every queued device has also
+        # actually had a chance to run.
+        self._launch_next_queued()
+        self._maybe_finish_batch()
 
     def failed_device_ids(self) -> list[str]:
         return [did for did, ok in self._batch_results.items() if not ok]

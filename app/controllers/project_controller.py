@@ -71,6 +71,14 @@ class ProjectController(QObject):
         self.project = ProjectModel()
         self.current_file_path: str | None = None
         self.dirty: bool = False
+        # Forced-save guard (see MainWindow._confirm_legacy_migration_before_proceeding
+        # and docs/USER_MANUAL.md "Forced save for legacy projects"): set
+        # whenever the currently-loaded project originated from a legacy
+        # .efmproj file and hasn't yet been migrated via Save As to
+        # .emfm. Distinct from `dirty` -- a legacy project that gets
+        # Saved As is no longer pending migration even if further edits
+        # afterwards make it dirty again in the ordinary sense.
+        self.legacy_pending_migration: bool = False
 
     # ------------------------------------------------------------------
     def new_project(self) -> None:
@@ -78,6 +86,7 @@ class ProjectController(QObject):
         self.project = ProjectModel()
         self.current_file_path = None
         self.dirty = False
+        self.legacy_pending_migration = False
         self.project_loaded.emit(self.project)
         logger.info("Created new blank project")
 
@@ -109,6 +118,7 @@ class ProjectController(QObject):
         # ever overwriting the old file in the old format.
         self.current_file_path = None if is_legacy else file_path
         self.dirty = is_legacy
+        self.legacy_pending_migration = is_legacy
         self.project_loaded.emit(self.project)
 
         if is_legacy:
@@ -154,6 +164,7 @@ class ProjectController(QObject):
                 self.project_lock_warning.emit(str(exc))
         self.current_file_path = target
         self.dirty = False
+        self.legacy_pending_migration = False
         # A real save always supersedes whatever was sitting in the
         # crash-recovery slot for this session.
         discard_autosave_recovery()
@@ -205,6 +216,7 @@ class ProjectController(QObject):
         self.project = recovered
         self.current_file_path = None
         self.dirty = True
+        self.legacy_pending_migration = False
         self.project_loaded.emit(self.project)
         logger.info("Recovered project from crash-protection autosave slot")
         return True

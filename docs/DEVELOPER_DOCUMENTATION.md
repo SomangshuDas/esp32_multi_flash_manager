@@ -29,13 +29,19 @@ This document is for engineers extending or maintaining the codebase.
    the OS serial driver parked in an uninterruptible I/O wait that
    esptool has no timeout for, and without this the worker's QThread
    (and therefore `FlashController.is_busy()`) never returns.
-3. **One QThread per device during a batch.** `FlashWorker` (in
-   `app/workers/flash_worker.py`) is a `QThread` subclass; `N` devices
-   selected for upload means `N` concurrently running `FlashWorker`
-   instances, each with its own subprocess. This is what gives real
-   parallelism without any manual thread-pool bookkeeping — `FlashController`
-   just launches one `FlashWorker` per device and aggregates their
-   `finished_flash` signals to know when the whole batch is done.
+3. **One QThread per device, up to a configurable cap, during a batch.**
+   `FlashWorker` (in `app/workers/flash_worker.py`) is a `QThread`
+   subclass; of the `N` devices selected for upload, up to
+   `get_max_parallel_flashes()` (Settings → General → "Max Parallel
+   Flashes", default `MAX_PARALLEL_FLASHES` = 8) run as concurrent
+   `FlashWorker` instances at once, each with its own subprocess. Any
+   remainder sits in `FlashController._queue` (status `STATUS_QUEUED`)
+   and is launched one-for-one as running workers finish, so a batch of
+   dozens of devices can't exhaust OS threads, file descriptors, or USB
+   bandwidth by firing every subprocess simultaneously.
+   `FlashController` aggregates `finished_flash` signals (plus queued
+   devices resolved via cancellation) to know when the whole batch is
+   done.
 4. **Never crash.** `app/main.py` installs a global `sys.excepthook` that
    logs any unhandled exception to `error.log` and shows a message box,
    instead of letting Qt/Python kill the process silently. Additionally,

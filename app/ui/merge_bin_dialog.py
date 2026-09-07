@@ -21,7 +21,6 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -31,6 +30,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -39,9 +39,9 @@ from PySide6.QtWidgets import (
 )
 
 from app.firmware_manager.bin_merge import (
+    MergeResult,
     MergeSeverity,
     firmware_bin_folder,
-    run_merge,
     validate_merge_entries,
 )
 from app.models.device_model import DeviceConfig
@@ -60,6 +60,7 @@ from app.utilities.constants import (
     SETTINGS_KEY_MERGE_DEFAULT_LOCATION,
     SETTINGS_KEY_MERGE_POST_ACTION,
 )
+from app.workers.merge_worker import MergeWorker
 
 COL_INCLUDE = 0
 COL_FILE = 1
@@ -74,6 +75,8 @@ class MergeBinDialog(QDialog):
         self.settings = get_settings()
         self._device = device
         self._merged_entry: FirmwareEntry | None = None
+        self._worker: MergeWorker | None = None
+        self._pending_source_entries: list[FirmwareEntry] = []
 
         # merge-bin needs one concrete chip -- "auto" is meaningless offline.
         self._real_chips = [c for c in supported_chips if c != AUTO_CHIP] or [device.chip_type or "esp32"]
@@ -133,14 +136,30 @@ class MergeBinDialog(QDialog):
         self.merge_button = QPushButton("Merge")
         self.merge_button.setObjectName("primaryButton")
         self.merge_button.clicked.connect(self._on_merge_clicked)
+        self.cancel_merge_button = QPushButton("Cancel Merge")
+        self.cancel_merge_button.clicked.connect(self._on_cancel_merge_clicked)
+        self.cancel_merge_button.setVisible(False)
         button_row.addWidget(self.validate_button)
         button_row.addWidget(self.merge_button)
+        button_row.addWidget(self.cancel_merge_button)
         button_row.addStretch(1)
         outer_layout.addLayout(button_row)
+
+        # Reliability: merging used to run synchronously on the GUI thread
+        # (subprocess.run with no cancel button, no progress beyond a
+        # busy-cursor convention), freezing the whole app for up to
+        # MERGE_TIMEOUT_SECONDS on a large/slow merge. MergeWorker now runs
+        # it on a background QThread; this indeterminate bar plus the
+        # Cancel button above are the only UI-visible sign of that.
+        self.merge_progress = QProgressBar()
+        self.merge_progress.setRange(0, 0)  # indeterminate -- esptool merge-bin reports no % complete
+        self.merge_progress.setVisible(False)
+        outer_layout.addWidget(self.merge_progress)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.reject)
+        self._close_button_box = buttons
         outer_layout.addWidget(buttons)
 
     # ------------------------------------------------------------------
@@ -240,30 +259,70 @@ class MergeBinDialog(QDialog):
         flash_freq = self._device.flash_frequency if self._device.flash_frequency != "keep" else "keep"
         flash_size = self._device.flash_size if self._device.flash_size != "keep" else "keep"
 
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            result = run_merge(entries, chip, output_path, flash_mode, flash_freq, flash_size)
-        finally:
-            QApplication.restoreOverrideCursor()
+        self._pending_source_entries = entries
+        self._set_merge_in_progress(True)
+        self.status_label.setStyleSheet("")
+        self.status_label.setText("Merging...")
+
+        self._worker = MergeWorker(entries, chip, output_path, flash_mode, flash_freq, flash_size, parent=self)
+        self._worker.log_line.connect(self._on_merge_log_line)
+        self._worker.merge_finished.connect(self._on_merge_finished)
+        self._worker.start()
+
+    def _on_merge_log_line(self, line: str) -> None:
+        self.status_label.setText(f"Merging... {line}"[:200])
+
+    def _on_cancel_merge_clicked(self) -> None:
+        if self._worker is not None:
+            self._worker.request_cancel()
+            self.cancel_merge_button.setEnabled(False)
+
+    def _set_merge_in_progress(self, in_progress: bool) -> None:
+        self.validate_button.setEnabled(not in_progress)
+        self.merge_button.setEnabled(not in_progress)
+        self.cancel_merge_button.setVisible(in_progress)
+        self.cancel_merge_button.setEnabled(True)
+        self.merge_progress.setVisible(in_progress)
+        self._close_button_box.setEnabled(not in_progress)
+
+    def _on_merge_finished(self, result: MergeResult) -> None:
+        self._set_merge_in_progress(False)
+        entries = self._pending_source_entries
+        self._worker = None
 
         if not result.success:
-            detail = result.error_message
-            if result.output_text.strip():
-                detail += "\n\n" + result.output_text.strip()[-2000:]
-            QMessageBox.critical(self, "Merge Failed", detail)
             self.status_label.setStyleSheet("color: #e03131;")
             self.status_label.setText(f"Merge failed: {result.error_message}")
+            if "cancelled" not in result.error_message.lower():
+                detail = result.error_message
+                if result.output_text.strip():
+                    detail += "\n\n" + result.output_text.strip()[-2000:]
+                QMessageBox.critical(self, "Merge Failed", detail)
             return
 
-        merged = FirmwareEntry(file_path=output_path, address="0x0", enabled=True)
+        merged = FirmwareEntry(file_path=result.output_path, address="0x0", enabled=True)
         merged.refresh()
         self._merged_entry = merged
         self._source_ids = [e.id for e in entries]
 
-        QMessageBox.information(self, "Merge Complete", f"Merged image written to:\n{output_path}")
+        QMessageBox.information(self, "Merge Complete", f"Merged image written to:\n{result.output_path}")
         self.status_label.setStyleSheet("color: #2f9e44;")
-        self.status_label.setText(f"Merge complete: {output_path}")
+        self.status_label.setText(f"Merge complete: {result.output_path}")
         self.accept()
+
+    # ------------------------------------------------------------------
+    def reject(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            proceed = QMessageBox.question(
+                self, "Cancel Merge?",
+                "A merge is currently running. Cancel it and close this dialog?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if proceed != QMessageBox.StandardButton.Yes:
+                return
+            self._worker.request_cancel()
+            self._worker.wait(5000)
+        super().reject()
 
     # ------------------------------------------------------------------
     def merged_entry(self) -> FirmwareEntry | None:

@@ -1,0 +1,33 @@
+name: Version Consistency
+
+# CI/CD and Release Engineering: fails the build if APP_VERSION in
+# app/utilities/constants.py doesn't match the <!-- APP_VERSION: X.Y.Z -->
+# marker in README.md, CHANGELOG.md, or any docs/**/*.md file that
+# carries one (see scripts/check_version_consistency.py for why an
+# explicit marker is used instead of scanning for any "X.Y.Z"-shaped
+# string). Runs on every push/PR to main as an early warning, and is the
+# authoritative gate on an actual `v*.*.*` release tag.
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify APP_VERSION matches README.md / CHANGELOG.md / docs markers
+        run: python scripts/check_version_consistency.py

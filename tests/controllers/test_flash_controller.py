@@ -50,3 +50,51 @@ class TestCancelWithNoWorkers:
 class TestFailedDeviceIds:
     def test_empty_before_any_batch(self, controller):
         assert controller.failed_device_ids() == []
+
+
+class TestParallelFlashCap:
+    """
+    Reliability fix: FlashController.start_batch() used to launch one
+    QThread + one esptool subprocess per device with no limit, so a very
+    large batch fired all of them at once instead of queuing. These are
+    fast, worker-free unit tests of the queue bookkeeping itself; see
+    tests/workers/test_flash_worker_e2e.py::TestParallelFlashCapEndToEnd
+    for the version that drives real (mocked-serial) FlashWorker threads.
+    """
+
+    def test_default_cap_matches_settings_default(self, controller):
+        from app.utilities.constants import MAX_PARALLEL_FLASHES
+
+        assert controller._resolve_max_parallel() == MAX_PARALLEL_FLASHES
+
+    def test_override_cap_is_respected(self, qtbot):
+        from app.controllers.flash_controller import FlashController
+
+        capped = FlashController(max_parallel=3)
+        assert capped._resolve_max_parallel() == 3
+
+    def test_override_cap_clamped_to_at_least_one(self, qtbot):
+        from app.controllers.flash_controller import FlashController
+
+        capped = FlashController(max_parallel=0)
+        assert capped._resolve_max_parallel() == 1
+
+    def test_queued_device_with_no_worker_counts_as_busy(self, controller):
+        device = DeviceConfig(name="Queued", com_port="COM9", chip_type="esp32")
+        controller._queue.append(device)
+        assert controller.is_busy(device.id) is True
+        assert controller.any_busy() is True
+
+    def test_cancelling_a_queued_device_marks_it_cancelled_and_records_history(self, qtbot, controller):
+        from app.utilities.constants import STATUS_CANCELLED
+
+        device = DeviceConfig(name="Queued", com_port="COM9", chip_type="esp32")
+        controller._batch_size = 1
+        controller._queue.append(device)
+
+        with qtbot.waitSignal(controller.history_entry_created, timeout=1000):
+            controller.cancel(device.id)
+
+        assert device.runtime.status == STATUS_CANCELLED
+        assert device.id not in [d.id for d in controller._queue]
+        assert controller.failed_device_ids() == [device.id]
