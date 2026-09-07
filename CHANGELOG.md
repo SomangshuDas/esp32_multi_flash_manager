@@ -23,9 +23,6 @@ that constant.
   device in a batch firing its own subprocess at once.
 - **Cancel Merge** button and background-thread execution for Merge
   Bins: a large or slow merge no longer freezes the application.
-- `.github/dependabot.yml` to automate dependency-update pull requests
-  for both `pip` (`requirements.txt`/`requirements-dev.txt`) and
-  `github-actions` (workflow action versions).
 - `.github/workflows/version_check.yml`: fails a tagged-release build if
   `APP_VERSION` doesn't match the version markers in README.md and this
   file.
