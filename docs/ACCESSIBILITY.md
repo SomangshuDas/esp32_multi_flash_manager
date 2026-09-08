@@ -13,11 +13,18 @@ customizable action's keyboard shortcut can be remapped from Tools →
 Keyboard Shortcuts... for anyone who finds the defaults hard to reach or
 memorize.
 
-We have not yet performed a dedicated screen-reader audit or added
-explicit `QAccessible` names/descriptions beyond what Qt infers
-automatically from widget text. This document reflects that starting
-point honestly rather than claiming a conformance level (e.g. WCAG 2.1
-AA) we haven't verified.
+We have not yet performed a dedicated screen-reader audit. As of this
+release, the newly-added Settings controls (Advanced, Diagnostics, and
+Privacy tabs — see `CHANGELOG.md`) have explicit `setAccessibleName()`
+calls beyond what Qt infers automatically from widget text, since a
+`QFormLayout` label is not always reliably associated with its field by
+every screen reader. The rest of the application's widgets rely on Qt's
+automatic inference, as described below, and have not yet been
+individually audited.
+
+Beyond that incremental pass, this document reflects our current
+starting point honestly rather than claiming a conformance level (e.g.
+WCAG 2.1 AA) we haven't verified.
 
 ## Known gaps
 

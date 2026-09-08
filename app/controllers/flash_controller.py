@@ -225,6 +225,35 @@ class FlashController(QObject):
         self._batch_results[device_id] = success
 
         worker = self._workers.get(device_id)
+        if worker is not None:
+            # Reliability: finished_flash is emitted from inside run() a
+            # few instructions before the background QThread's OS thread
+            # actually exits, so this slot (delivered via a queued
+            # cross-thread connection) can start running on the main
+            # thread slightly *before* that OS thread has fully unwound
+            # and torn down. Left alone, the worker object then has
+            # nothing keeping it alive but this controller's own
+            # lifetime; once the controller itself goes out of scope
+            # (e.g. between tests, or when a dialog closes), the
+            # still-finishing QThread can end up racing whatever runs
+            # next -- the exact class of bug documented on FlashWorker's
+            # own __init__ (a background thread touching os.environ via
+            # AppSettings/get_app_data_dir at the same moment the main
+            # thread mutates it), just from the "leftover thread" angle
+            # instead of the "read during run()" angle. wait() blocks
+            # only until the thread that *just told us it's done*
+            # actually finishes -- normally near-instant at this point --
+            # closing that window before anything else can observe or
+            # collect this worker. The bound is a safety net only (a
+            # worker that already emitted finished_flash should never
+            # legitimately take this long to unwind); a timeout is
+            # logged, not raised, so a slow teardown can never turn into
+            # a hung UI.
+            if not worker.wait(5000):
+                logger.warning(
+                    "FlashWorker for device %s did not fully terminate within 5s of "
+                    "finished_flash; continuing anyway.", device_id,
+                )
         device_name = worker.device.name if worker else device_id
         com_port = worker.device.com_port if worker else ""
         firmware_summary = (

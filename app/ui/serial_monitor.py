@@ -46,10 +46,10 @@ from PySide6.QtWidgets import (
 import serial
 
 from app.ui.widgets import make_scrollable
+from app.utilities.app_settings import get_live_log_max_lines
 from app.utilities.constants import (
     BAUD_RATES,
     DEFAULT_SERIAL_MONITOR_BAUD,
-    LIVE_LOG_MAX_LINES,
     SERIAL_MONITOR_LINE_ENDINGS,
 )
 from app.utilities.helpers import safe_filename, timestamp_now
@@ -180,7 +180,7 @@ class SerialMonitorWidget(QWidget):
 
         self.text_edit = QPlainTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setMaximumBlockCount(LIVE_LOG_MAX_LINES)
+        self.text_edit.setMaximumBlockCount(get_live_log_max_lines())
         self.text_edit.setStyleSheet("font-family: Consolas, 'Courier New', monospace; font-size: 12px;")
         self.text_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.text_edit.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)

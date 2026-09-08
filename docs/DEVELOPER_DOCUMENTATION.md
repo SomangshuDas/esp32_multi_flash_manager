@@ -41,7 +41,20 @@ This document is for engineers extending or maintaining the codebase.
    bandwidth by firing every subprocess simultaneously.
    `FlashController` aggregates `finished_flash` signals (plus queued
    devices resolved via cancellation) to know when the whole batch is
-   done.
+   done. `ProvisionWorker`/`ProvisionController` (see §"Provisioning
+   flow" below) apply the identical pattern to batch eFuse burning, with
+   its own settings-backed cap (`get_max_parallel_provisions()`) and
+   stall timeout (`get_provision_stall_timeout_seconds()`), both resolved
+   the same way -- once, on the main thread, at worker-construction time.
+   `finished_flash`/`finished_provision` is emitted from inside `run()`
+   a few instructions before the `QThread`'s OS thread actually exits, so
+   both controllers' `_on_worker_finished` call `worker.wait()` (bounded
+   to 5s, logged rather than raised on timeout) before doing anything
+   else once that signal arrives -- otherwise nothing keeps the worker
+   alive past that point, and a still-finishing `QThread` can be raced by
+   whatever runs next, the same `os.environ` hazard described in point 2
+   above from the "leftover thread" angle instead of the "read during
+   `run()`" angle.
 4. **Never crash.** `app/main.py` installs a global `sys.excepthook` that
    logs any unhandled exception to `error.log` and shows a message box,
    instead of letting Qt/Python kill the process silently. Additionally,
@@ -64,6 +77,7 @@ This document is for engineers extending or maintaining the codebase.
 | `app/models/history_model.py` | `HistoryEntry` (now with `id`/`device_id`/`mac_address`/`qc_status`) + CSV export helper |
 | `app/controllers/device_controller.py` | CRUD + search + batch-edit over the device list |
 | `app/controllers/flash_controller.py` | Spins up/tracks `FlashWorker`s, aggregates batch completion, emits history entries |
+| `app/controllers/provision_controller.py` | Batch counterpart of `flash_controller.py`: spins up/tracks `ProvisionWorker`s across multiple devices at once, same parallel-cap/queue design |
 | `app/controllers/project_controller.py` | New/open/save/save-as, missing-firmware detection on load |
 | `app/flash_engine/esptool_wrapper.py` | `FlashCommandBuilder` (DeviceConfig → argv) + `FlashProcess` (subprocess wrapper) + `parse_progress_line` |
 | `app/flash_engine/validator.py` | Pure, offline pre-upload validation (duplicate/invalid/overlapping addresses, port availability, etc.) → `ValidationReport` |
@@ -73,7 +87,9 @@ This document is for engineers extending or maintaining the codebase.
 | `app/firmware_manager/profiles.py` | Named, reusable firmware+settings bundles, stored as JSON in app-data |
 | `app/workers/flash_worker.py` | `QThread` that drives one device's `esptool` subprocess |
 | `app/workers/port_watcher.py` | `QTimer`-polled COM port connect/disconnect detection |
-| `app/logging_setup/logger.py` | Rotating file handlers: application/flash/error/debug logs |
+| `app/logging_setup/logger.py` | Rotating file handlers: application/flash/error/debug logs, plus an optional 5th structured `events.jsonl` handler (`JsonLinesFormatter`) gated by Settings → Diagnostics |
+| `app/utilities/diagnostics.py` | `export_diagnostics_bundle()`: one-click zip of all current log files + app/OS/Python/esptool version info, for Help → Export Diagnostics Bundle... |
+| `app/utilities/telemetry.py` | Opt-in, local-only anonymous usage/crash event recorder (`record_event()`); off by default, no network transmission in this build — see module docstring and `docs/PRIVACY.md` |
 | `app/utilities/constants.py` | Every shared literal (fallback chip list, baud rates, status strings, colors, shortcuts, settings keys, merge/theme/lock constants, ...) |
 | `app/utilities/chip_detect.py` | Dynamic chip-support detection from the installed `esptool` package (`detect_supported_chips()`), plus `find_unsupported_chips()` for the project-load warning |
 | `app/utilities/helpers.py` | Pure functions: MD5, human-readable sizes/durations, hex address validation, ... |
@@ -84,7 +100,8 @@ This document is for engineers extending or maintaining the codebase.
 | `app/workers/security_worker.py` | `ProvisionWorker`: `QThread` that generates any requested keys then burns the requested eFuses for one device |
 | `app/workers/read_worker.py` | `ReadWorker`: `QThread` for the read-only Chip Info / Flash ID / eFuse Summary / Security Info / Read Flash Region operations |
 | `app/ui/security_settings_widget.py` | `SecuritySettingsWidget`: the Security tab — per-device flash encryption/secure boot fields, commit-on-change, opens `ProvisionDialog` |
-| `app/ui/provision_dialog.py` | `ProvisionDialog`: validation → `ProvisionConfirmDialog` → runs `ProvisionWorker` with a live log |
+| `app/ui/provision_dialog.py` | `ProvisionDialog`: validation → `ProvisionConfirmDialog` → runs `ProvisionWorker` with a live log, for a single device |
+| `app/ui/batch_provision_dialog.py` | `BatchProvisionDialog`: same validation → confirmation → burn flow as `ProvisionDialog`, across multiple devices at once via `ProvisionController` |
 | `app/ui/provision_confirm_dialog.py` | `ProvisionConfirmDialog`: checkbox + typed-phrase confirmation gate shown before any eFuse burn |
 | `app/ui/read_device_dialog.py` | `ReadDeviceDialog`: the Read Flash / eFuse / Chip Info panel, opened from Tools menu or the device table's context menu |
 | `app/ui/merge_bin_dialog.py` | `MergeBinDialog`: pick source firmware, validate, merge, choose the post-merge Firmware Settings action |
@@ -98,7 +115,87 @@ This document is for engineers extending or maintaining the codebase.
 | `app/utilities/read_output_parser.py` | Pure text-in/rows-out parser turning raw `esptool`/`espefuse` Read Device output into the Read Device dialog's friendly **Summary** rows; the **Log** tab always shows the unmodified original output alongside it |
 | `app/ui/*.py` | Qt widgets/dialogs — see file docstrings for each |
 
-## 3. Extending chip / flash-parameter support
+## 2a. Architecture diagram
+
+High-level data/control flow for a typical flash batch. UI widgets never
+talk to workers directly — every operation goes through a controller,
+which owns the parallel-worker pool and is the only thing that mutates
+the project model.
+
+```mermaid
+flowchart TD
+    subgraph UI["app/ui/*.py (Qt widgets)"]
+        MW[MainWindow]
+        DP[DevicePanel]
+        FP[FirmwarePanel]
+    end
+
+    subgraph Controllers["app/controllers/*.py"]
+        DC[DeviceController]
+        FC[FlashController]
+        PC[ProvisionController]
+        PJC[ProjectController]
+    end
+
+    subgraph Workers["app/workers/*.py (QThread pool, capped at\nMAX_PARALLEL_FLASHES / MAX_PARALLEL_PROVISIONS)"]
+        FW[FlashWorker]
+        SW[ProvisionWorker]
+        RW[ReadWorker]
+        PW[PortWatcher]
+    end
+
+    subgraph Engine["app/flash_engine/*.py"]
+        ETW[esptool_wrapper.FlashProcess]
+        VAL[validator.py]
+        SEC[security_manager.py]
+    end
+
+    subgraph Storage["Disk"]
+        PROJ[(.emfm project file)]
+        LOGS[(logs/*.log, events.jsonl)]
+        SETTINGS[(settings.json)]
+    end
+
+    MW --> DP --> DC
+    MW --> FP
+    DC --> PJC --> PROJ
+    FP --> FC
+    FC -->|"queues beyond the cap\n(STATUS_QUEUED)"| FW
+    FC --> VAL
+    FW --> ETW -->|subprocess| ESPTOOL[esptool CLI]
+    PC --> SW --> SEC -->|subprocess| ESPTOOL
+    PW -.->|"port scan interval\n(configurable)"| DC
+    FW --> LOGS
+    SW --> LOGS
+    MW -->|Settings dialog| SETTINGS
+```
+
+Every worker (`FlashWorker`, `ProvisionWorker`, `ReadWorker`) is a
+`QThread` wrapping a synchronous `esptool`/`espsecure`/`espefuse`
+subprocess; the controllers are what enforce the parallel-worker cap and
+queue anything beyond it, not the workers themselves.
+
+## 2b. Concurrency and scale limits
+
+| Limit | Default | Configurable? | Where |
+|---|---|---|---|
+| Parallel flashes | 8 | Settings → General (`MAX_PARALLEL_FLASHES_MIN`–`MAX_PARALLEL_FLASHES_MAX`: 1–64) | `app/controllers/flash_controller.py` |
+| Parallel provisioning (eFuse burns) | 8 | Settings → General (`MAX_PARALLEL_PROVISIONS_MIN`–`MAX_PARALLEL_PROVISIONS_MAX`: 1–32) | `app/controllers/provision_controller.py` |
+| Devices per project file | 2000 | Not configurable — a hard input-validation cap, not a UX preference. See `docs/THREAT_MODEL.md`. | `app/utilities/constants.py::MAX_DEVICES_PER_PROJECT` |
+| Firmware entries per device | 200 | Same as above | `app/utilities/constants.py::MAX_FIRMWARE_ENTRIES_PER_DEVICE` |
+| Project file size | 25 MiB | Same as above | `app/utilities/constants.py::MAX_PROJECT_FILE_SIZE_BYTES` |
+
+Why 8 as the default parallel cap for both flashing and provisioning:
+this is bounded by USB host-controller bandwidth and OS thread overhead
+long before it's bounded by CPU, and 8 is a reasonable "one small USB
+hub's worth" default that most benches can raise or lower to match their
+actual hub/hardware. Devices beyond the cap are not rejected — they're
+queued (`STATUS_QUEUED`) and started automatically as running workers
+finish, so a batch of 40 devices against a cap of 8 just runs in waves
+rather than requiring the operator to split it into smaller batches
+manually.
+
+
 
 **Chip type is no longer a hardcoded list.** At startup, `MainWindow`
 calls `app.utilities.chip_detect.detect_supported_chips()`, which imports
@@ -233,11 +330,31 @@ application-data directory returned by
   `app.workers.*` loggers only
 - `error.log` — ERROR+ from anywhere
 - `debug.log` — everything, unfiltered
+- `events.jsonl` — **optional**, off by default (Settings → Diagnostics
+  → "Enable structured JSON logging"). Mirrors every log record from the
+  four handlers above as one JSON object per line (`JsonLinesFormatter`
+  in `app/logging_setup/logger.py`), for piping into a log-aggregation
+  tool that expects structured records. Enabling it does not change or
+  replace the four text logs, which are always written.
 
 Get a logger anywhere with `from app.logging_setup.logger import
-get_logger; logger = get_logger(__name__)`. `Settings → Open Logs Folder`
-in the app opens this directory directly on any OS via
+get_logger; logger = get_logger(__name__)`. `Settings → Diagnostics →
+Open Logs Folder` in the app opens this directory directly on any OS via
 `QDesktopServices.openUrl`.
+
+**Diagnostics bundle export**: `Help → Export Diagnostics Bundle...`
+(also reachable from Settings → Diagnostics) calls
+`app/utilities/diagnostics.py::export_diagnostics_bundle()`, which zips
+every log file that currently exists together with a
+`diagnostics_info.json` manifest (app version, OS, Python version,
+detected `esptool` version) — a manual, one-shot, user-triggered export
+with no automatic/background component.
+
+**Opt-in telemetry**: `app/utilities/telemetry.py::record_event()` is a
+no-op unless the user has opted in via Settings → Privacy. See that
+module's docstring and `docs/PRIVACY.md` for exactly what is (and is
+not) recorded, and note that this build never transmits telemetry over
+the network regardless of the setting — see `docs/PRIVACY.md` for why.
 
 ## 9. Cross-platform notes
 
@@ -281,6 +398,14 @@ asset matching both the current OS *and* the current build kind
 (portable vs. installer, via `update_checker.is_portable_build()`). The
 app never downloads or applies an update in place; installing is always
 left to the OS-native installer/DMG/AppImage flow.
+
+Several larger, self-contained features that were scoped for a future
+release instead of this one — an in-app firmware-repository browser, a
+zip+manifest bulk-flashing workflow, a "dry run" pre-flight simulation
+mode, a before/after diff preview for Batch Edit and Assign Firmware
+Set, and a full undo/redo command stack covering every mutating
+operation — are tracked with their design rationale in `ROADMAP.md`
+rather than shipped partially here.
 
 ## 11. Assign Firmware Set to Devices, Serial Monitor & Interface Lock
 
@@ -525,6 +650,26 @@ which:
    requested eFuse block by running `SecurityCommandBuilder`'s burn-*
    commands through `FlashProcess`, the same subprocess-streaming class
    `FlashWorker` uses for actual flashing.
+
+**Batch provisioning (`Tools → Provision Devices (Batch)...`):**
+`BatchProvisionDialog` runs the same steps 1–2 above once, but across
+every eligible device at once — devices that never enabled Flash
+Encryption/Secure Boot are excluded outright, and any device that fails
+`validate_security_settings()` is shown, disabled, with its error inline
+rather than blocking the whole batch. A single `ProvisionConfirmDialog`
+covers every device's burn summary. Step 3 is delegated to
+`ProvisionController` (`app/controllers/provision_controller.py`)
+instead of a single `ProvisionWorker` call: it launches one
+`ProvisionWorker` per eligible device, capped at
+`app_settings.get_max_parallel_provisions()` concurrent workers (Settings
+→ Provisioning → "Max Parallel Provisions", default 4), queuing
+(`STATUS_QUEUED`) and auto-launching the rest as running workers finish —
+the exact same cap/queue design `FlashController` uses for parallel
+flashing, applied here because burning eFuses on many devices at once
+carries the same OS-thread/USB-bandwidth risk, with a smaller default cap
+given how much more consequential a mistake is. `ProvisionWorker` itself
+is unaware it's part of a batch; `ProvisionController` only adds
+orchestration around already-existing single-device workers.
 
 **Read Flash / eFuse / Chip Info:** `ReadWorker` (`QThread`) plus
 `ReadDeviceDialog` implement a read-only inspection panel independent of

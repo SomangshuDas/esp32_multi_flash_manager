@@ -31,14 +31,38 @@ from PySide6.QtCore import QByteArray
 
 from app.logging_setup.logger import get_logger
 from app.utilities.constants import (
+    DEFAULT_ENABLED_TELEMETRY,
     FLASH_STALL_TIMEOUT_MAX_SECONDS,
     FLASH_STALL_TIMEOUT_MIN_SECONDS,
     FLASH_STALL_TIMEOUT_SECONDS,
+    LIVE_LOG_MAX_LINES,
+    LIVE_LOG_MAX_LINES_MAX,
+    LIVE_LOG_MAX_LINES_MIN,
     MAX_PARALLEL_FLASHES,
     MAX_PARALLEL_FLASHES_MAX,
     MAX_PARALLEL_FLASHES_MIN,
+    MAX_PARALLEL_PROVISIONS,
+    MAX_PARALLEL_PROVISIONS_MAX,
+    MAX_PARALLEL_PROVISIONS_MIN,
+    PORT_SCAN_INTERVAL_MS,
+    PORT_SCAN_INTERVAL_MS_MAX,
+    PORT_SCAN_INTERVAL_MS_MIN,
+    PROJECT_LOCK_STALE_SECONDS,
+    PROJECT_LOCK_STALE_SECONDS_MAX,
+    PROJECT_LOCK_STALE_SECONDS_MIN,
+    PROVISION_STALL_TIMEOUT_MAX_SECONDS,
+    PROVISION_STALL_TIMEOUT_MIN_SECONDS,
+    PROVISION_STALL_TIMEOUT_SECONDS,
+    SETTINGS_KEY_DEFAULT_DEVICE_PROFILE,
     SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS,
+    SETTINGS_KEY_JSON_LOGGING_ENABLED,
+    SETTINGS_KEY_LIVE_LOG_MAX_LINES,
     SETTINGS_KEY_MAX_PARALLEL_FLASHES,
+    SETTINGS_KEY_MAX_PARALLEL_PROVISIONS,
+    SETTINGS_KEY_PORT_SCAN_INTERVAL_MS,
+    SETTINGS_KEY_PROJECT_LOCK_STALE_SECONDS,
+    SETTINGS_KEY_PROVISION_STALL_TIMEOUT_SECONDS,
+    SETTINGS_KEY_TELEMETRY_ENABLED,
 )
 from app.utilities.helpers import clear_file_hidden, get_app_data_dir, mark_file_hidden
 
@@ -195,3 +219,111 @@ def get_max_parallel_flashes() -> int:
     except (TypeError, ValueError):
         return MAX_PARALLEL_FLASHES
     return max(MAX_PARALLEL_FLASHES_MIN, min(MAX_PARALLEL_FLASHES_MAX, value))
+
+
+def get_max_parallel_provisions() -> int:
+    """
+    Return the configured cap on how many devices ProvisionController.start_batch()
+    will burn eFuses on concurrently (see Settings -> Provisioning -> "Max
+    Parallel Provisions"). Mirrors get_max_parallel_flashes() above -- falls
+    back to the MAX_PARALLEL_PROVISIONS default, and clamps to
+    [MAX_PARALLEL_PROVISIONS_MIN, MAX_PARALLEL_PROVISIONS_MAX] so a
+    corrupted/hand-edited settings.json value can't produce a nonsensical
+    (zero, negative, or absurdly high) cap.
+    """
+    settings = get_settings()
+    try:
+        value = int(settings.value(SETTINGS_KEY_MAX_PARALLEL_PROVISIONS, MAX_PARALLEL_PROVISIONS))
+    except (TypeError, ValueError):
+        return MAX_PARALLEL_PROVISIONS
+    return max(MAX_PARALLEL_PROVISIONS_MIN, min(MAX_PARALLEL_PROVISIONS_MAX, value))
+
+
+def get_provision_stall_timeout_seconds() -> float:
+    """
+    Return the configured stall timeout for provisioning (eFuse-burning)
+    subprocesses (see Settings -> Provisioning -> "Provision Stall
+    Timeout"). Mirrors get_flash_stall_timeout_seconds() above -- falls
+    back to the PROVISION_STALL_TIMEOUT_SECONDS default, and clamps to
+    [PROVISION_STALL_TIMEOUT_MIN_SECONDS, PROVISION_STALL_TIMEOUT_MAX_SECONDS].
+    Previously this value was a bare literal with no user-facing override.
+    """
+    settings = get_settings()
+    try:
+        value = float(
+            settings.value(SETTINGS_KEY_PROVISION_STALL_TIMEOUT_SECONDS, PROVISION_STALL_TIMEOUT_SECONDS)
+        )
+    except (TypeError, ValueError):
+        return PROVISION_STALL_TIMEOUT_SECONDS
+    if value != value:  # NaN guard (NaN != NaN)
+        return PROVISION_STALL_TIMEOUT_SECONDS
+    return max(PROVISION_STALL_TIMEOUT_MIN_SECONDS, min(PROVISION_STALL_TIMEOUT_MAX_SECONDS, value))
+
+
+def get_port_scan_interval_ms() -> int:
+    """Return the configured PortWatcher polling interval, in milliseconds
+    (Settings -> Advanced -> "Port scan interval"). Falls back to
+    PORT_SCAN_INTERVAL_MS and clamps to [PORT_SCAN_INTERVAL_MS_MIN,
+    PORT_SCAN_INTERVAL_MS_MAX]."""
+    settings = get_settings()
+    try:
+        value = int(settings.value(SETTINGS_KEY_PORT_SCAN_INTERVAL_MS, PORT_SCAN_INTERVAL_MS))
+    except (TypeError, ValueError):
+        return PORT_SCAN_INTERVAL_MS
+    return max(PORT_SCAN_INTERVAL_MS_MIN, min(PORT_SCAN_INTERVAL_MS_MAX, value))
+
+
+def get_live_log_max_lines() -> int:
+    """Return the configured cap on lines kept in the live console / serial
+    monitor buffers (Settings -> Advanced -> "Live log max lines"). Falls
+    back to LIVE_LOG_MAX_LINES and clamps to [LIVE_LOG_MAX_LINES_MIN,
+    LIVE_LOG_MAX_LINES_MAX]."""
+    settings = get_settings()
+    try:
+        value = int(settings.value(SETTINGS_KEY_LIVE_LOG_MAX_LINES, LIVE_LOG_MAX_LINES))
+    except (TypeError, ValueError):
+        return LIVE_LOG_MAX_LINES
+    return max(LIVE_LOG_MAX_LINES_MIN, min(LIVE_LOG_MAX_LINES_MAX, value))
+
+
+def get_project_lock_stale_seconds() -> int:
+    """Return how old (in seconds) a project lock sidecar must be before
+    it's treated as abandoned (Settings -> Advanced -> "Project lock stale
+    after"). Falls back to PROJECT_LOCK_STALE_SECONDS and clamps to
+    [PROJECT_LOCK_STALE_SECONDS_MIN, PROJECT_LOCK_STALE_SECONDS_MAX]."""
+    settings = get_settings()
+    try:
+        value = int(
+            settings.value(SETTINGS_KEY_PROJECT_LOCK_STALE_SECONDS, PROJECT_LOCK_STALE_SECONDS)
+        )
+    except (TypeError, ValueError):
+        return PROJECT_LOCK_STALE_SECONDS
+    return max(PROJECT_LOCK_STALE_SECONDS_MIN, min(PROJECT_LOCK_STALE_SECONDS_MAX, value))
+
+
+def get_json_logging_enabled() -> bool:
+    """Return whether the optional structured JSON log (events.jsonl) is
+    enabled (Settings -> Diagnostics -> "Enable structured JSON logging").
+    Off by default; see DEFAULT_JSON_LOGGING_ENABLED."""
+    from app.utilities.constants import DEFAULT_JSON_LOGGING_ENABLED
+
+    return bool(
+        get_settings().value(SETTINGS_KEY_JSON_LOGGING_ENABLED, DEFAULT_JSON_LOGGING_ENABLED, type=bool)
+    )
+
+
+def get_telemetry_enabled() -> bool:
+    """Return whether anonymous usage/crash telemetry is enabled (Settings
+    -> Privacy -> "Share anonymous usage & crash data"). Off by default --
+    see app.utilities.telemetry's module docstring for exactly what is
+    recorded once opted in."""
+    return bool(
+        get_settings().value(SETTINGS_KEY_TELEMETRY_ENABLED, DEFAULT_ENABLED_TELEMETRY, type=bool)
+    )
+
+
+def get_default_device_profile_name() -> str:
+    """Return the name of the FirmwareProfile auto-applied to newly-added
+    devices, or "" if none is configured (Settings -> General -> "Default
+    device profile")."""
+    return str(get_settings().value(SETTINGS_KEY_DEFAULT_DEVICE_PROFILE, ""))

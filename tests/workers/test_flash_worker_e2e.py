@@ -252,6 +252,42 @@ class TestMockedSerialEndToEndCancel:
         assert failed == 2
 
 
+class TestWorkerThreadFullyStoppedOnFinish:
+    """
+    Reliability fix: finished_flash is emitted from inside FlashWorker.run()
+    a few instructions before the QThread's OS thread actually exits, so a
+    caller reacting to device_finished/batch_finished used to have no
+    guarantee the thread had truly stopped -- a still-finishing QThread with
+    nothing else keeping it alive could then be raced by whatever ran next
+    (a real, reproducible CI crash: Fatal Python error: Aborted). Both these
+    tests assert on isRunning() with NO extra qtbot.wait() cushion, so a
+    regression here (removing the worker.wait() call in
+    FlashController._on_worker_finished) would flip them back to flaky/fail.
+    """
+
+    def test_thread_already_stopped_when_device_finished_fires(self, qtbot, monkeypatch, controller, device):
+        monkeypatch.setattr(
+            flash_worker_module, "FlashProcess",
+            make_fake_flash_process(SUCCESSFUL_SESSION_LINES, return_code=0),
+        )
+        with qtbot.waitSignal(controller.device_finished, timeout=5000):
+            controller.start_batch([device])
+        worker = controller._workers[device.id]
+        assert worker.isRunning() is False
+
+    def test_thread_already_stopped_when_cancelled_mid_flash(self, qtbot, monkeypatch, controller, device):
+        monkeypatch.setattr(
+            flash_worker_module, "FlashProcess",
+            make_fake_flash_process(SUCCESSFUL_SESSION_LINES, return_code=0, block_after=2),
+        )
+        controller.start_batch([device])
+        qtbot.wait(100)
+        with qtbot.waitSignal(controller.device_finished, timeout=5000):
+            controller.cancel(device.id)
+        worker = controller._workers[device.id]
+        assert worker.isRunning() is False
+
+
 class TestBusyGuardDuringBatch:
     def test_start_batch_skips_devices_already_busy(self, qtbot, monkeypatch, controller, device):
         monkeypatch.setattr(

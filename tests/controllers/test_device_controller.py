@@ -39,6 +39,64 @@ class TestAddRemoveDuplicate:
         assert device.baud_rate == DEFAULT_BAUD
         assert device.flash_mode == DEFAULT_FLASH_MODE
 
+    def test_add_device_applies_default_device_profile_when_configured(self, controller):
+        from app.firmware_manager.profiles import FirmwareProfile, save_profile
+        from app.utilities.app_settings import get_settings
+        from app.utilities.constants import SETTINGS_KEY_DEFAULT_DEVICE_PROFILE
+
+        profile = FirmwareProfile(name="RFID Reader", chip_type="esp32s3", baud_rate=921600)
+        save_profile(profile)
+        get_settings().setValue(SETTINGS_KEY_DEFAULT_DEVICE_PROFILE, "RFID Reader")
+
+        device = controller.add_device()
+        assert device.chip_type == "esp32s3"
+        assert device.baud_rate == 921600
+
+    def test_add_device_ignores_missing_default_profile(self, controller):
+        """A configured default-profile name that no longer exists (e.g.
+        the profile was deleted) must not block adding a device."""
+        from app.utilities.app_settings import get_settings
+        from app.utilities.constants import DEFAULT_BAUD, SETTINGS_KEY_DEFAULT_DEVICE_PROFILE
+
+        get_settings().setValue(SETTINGS_KEY_DEFAULT_DEVICE_PROFILE, "Does Not Exist")
+
+        device = controller.add_device()
+        assert device.baud_rate == DEFAULT_BAUD
+
+    def test_import_from_csv_adds_devices_and_emits_signals(self, qtbot, controller, tmp_path):
+        csv_path = tmp_path / "devices.csv"
+        csv_path.write_text("name,com_port\nDevice A,COM3\nDevice B,COM4\n", encoding="utf-8")
+
+        with qtbot.waitSignals([controller.device_added, controller.device_added], timeout=1000):
+            result = controller.import_from_csv(str(csv_path))
+
+        assert result.imported_count == 2
+        assert result.errors == []
+        names = {d.name for d in controller.devices()}
+        assert {"Device A", "Device B"} <= names
+
+    def test_import_from_csv_applies_default_device_profile(self, controller, tmp_path):
+        from app.firmware_manager.profiles import FirmwareProfile, save_profile
+        from app.utilities.app_settings import get_settings
+        from app.utilities.constants import SETTINGS_KEY_DEFAULT_DEVICE_PROFILE
+
+        save_profile(FirmwareProfile(name="RFID Reader", chip_type="esp32s3", baud_rate=921600))
+        get_settings().setValue(SETTINGS_KEY_DEFAULT_DEVICE_PROFILE, "RFID Reader")
+
+        csv_path = tmp_path / "devices.csv"
+        csv_path.write_text("name\nDevice A\n", encoding="utf-8")
+        result = controller.import_from_csv(str(csv_path))
+
+        assert result.devices[0].chip_type == "esp32s3"
+        assert result.devices[0].baud_rate == 921600
+
+    def test_import_from_csv_partial_success_reports_errors(self, controller, tmp_path):
+        csv_path = tmp_path / "devices.csv"
+        csv_path.write_text("name,com_port\nDevice A,COM3\n,COM4\n", encoding="utf-8")
+        result = controller.import_from_csv(str(csv_path))
+        assert result.imported_count == 1
+        assert len(result.errors) == 1
+
     def test_remove_device_emits_signal_and_removes(self, qtbot, controller):
         device = controller.add_device("Bench 1")
         with qtbot.waitSignal(controller.device_removed, timeout=1000) as blocker:

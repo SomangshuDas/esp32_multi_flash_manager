@@ -1,5 +1,5 @@
 # ESP32 Multi Flash Manager
-<!-- APP_VERSION: 0.13.0 -->
+<!-- APP_VERSION: 0.14.0 -->
 
 A production-grade, cross-platform desktop application for flashing
 firmware onto a bench of ESP32 devices in parallel — with a
@@ -120,7 +120,13 @@ implementation for correctness.
   back) flashing plaintext firmware to a device that already shows
   encryption enabled. Optionally, generated keys can also be mirrored
   into the OS's own keychain as a second backup, off by default and
-  best-effort.
+  best-effort. For a production batch, `Tools → Provision Devices
+  (Batch)...` runs the same pre-flight validation and single
+  confirmation gate across every selected device at once, instead of
+  opening the Provision dialog and confirming once per device —
+  eligible devices burn eFuses in parallel (up to the configurable **Max
+  Parallel Provisions** limit, default 8), with the rest queued and
+  launched automatically as running ones finish.
 - **Read Flash / eFuse / Chip Info.** A read-only inspection panel
   (`Tools → Read Flash / eFuse / Chip Info...`, or right-click a device),
   independent of the upload workflow, built on esptool's/espefuse's own
@@ -201,6 +207,27 @@ implementation for correctness.
   fully compatible with existing multi-selection and Assign Firmware Set.
 - **Flash History search & filtering.** Narrow the History dock by device/
   MAC address, date range, result, or QC status, all combinable.
+- **CSV bulk device import** (`Devices → Import Devices from CSV...`).
+  Populate the device list in one step from a spreadsheet instead of
+  adding devices one at a time.
+- **Default Device Profile.** Optionally have a saved Firmware Profile
+  applied automatically to every newly-added device (`Settings →
+  General`), instead of the app's built-in defaults.
+- **Diagnostics bundle export** (`Help → Export Diagnostics Bundle...`).
+  One `.zip` with all current logs plus app/OS/Python/`esptool` version
+  info, for attaching to a bug report — no more hunting down individual
+  log files.
+- **Optional structured JSON logging** (`Settings → Diagnostics`), off by
+  default, mirrors every log record as `events.jsonl` for anyone piping
+  logs into a log-aggregation tool.
+- **Opt-in, local-only anonymous telemetry** (`Settings → Privacy`), off
+  by default — see `docs/PRIVACY.md` for exactly what is (and is not)
+  recorded, and note that this build never transmits telemetry over the
+  network regardless of the setting.
+- **Hardened `.emfm` project-file parsing.** File-size and device/
+  firmware-count caps reject a corrupted or hostile project file quickly
+  and predictably instead of risking a hang or excessive memory use —
+  see `docs/THREAT_MODEL.md`.
 
 ---
 
@@ -510,7 +537,11 @@ opening a public issue.
 Also see [`docs/PRIVACY.md`](docs/PRIVACY.md) for what data (if any)
 leaves your device, [`docs/ACCESSIBILITY.md`](docs/ACCESSIBILITY.md) for
 current screen-reader/keyboard-navigation conformance and known gaps,
-and [`docs/MAINTENANCE_POLICY.md`](docs/MAINTENANCE_POLICY.md) for how
+[`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) for how `.emfm` project
+files (untrusted input) are validated, [`docs/FAQ.md`](docs/FAQ.md) for
+quick answers to common questions, [`ROADMAP.md`](ROADMAP.md) for
+larger planned-but-not-yet-shipped features, and
+[`docs/MAINTENANCE_POLICY.md`](docs/MAINTENANCE_POLICY.md) for how
 this single-maintainer project plans to handle maintainer unavailability.
 
 ## License

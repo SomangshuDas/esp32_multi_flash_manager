@@ -34,9 +34,9 @@ from app.flash_engine.security_manager import (
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
 from app.utilities import key_vault
+from app.utilities.app_settings import get_provision_stall_timeout_seconds
 from app.utilities.helpers import propagate_trace_hook
 from app.utilities.constants import (
-    PROVISION_STALL_TIMEOUT_SECONDS,
     STATUS_BURNING,
     STATUS_COMPLETED,
     STATUS_FAILED,
@@ -59,11 +59,19 @@ class ProvisionWorker(QThread):
     log_line = Signal(str, str)
     finished_provision = Signal(str, bool, str, float)
 
-    def __init__(self, device: DeviceConfig, parent=None) -> None:
+    def __init__(self, device: DeviceConfig, parent=None, *, stall_timeout: float | None = None) -> None:
         super().__init__(parent)
         self.device = device
         self._process: FlashProcess | None = None
         self._cancel_requested = False
+        # Resolved here, on the main thread at construction time, and
+        # never re-read from inside run() -- mirrors FlashWorker's own
+        # stall-timeout handling (see its docstring): AppSettings touches
+        # os.environ on first use, which can race if first triggered from
+        # a background QThread instead of the main thread.
+        self._stall_timeout = (
+            stall_timeout if stall_timeout is not None else get_provision_stall_timeout_seconds()
+        )
 
     # ------------------------------------------------------------------
     def request_cancel(self) -> None:
@@ -152,7 +160,7 @@ class ProvisionWorker(QThread):
         self.log_line.emit(device_id, ">>> Command: " + " ".join(command))
         self._process = FlashProcess(command)
         self._process.start()
-        for line in self._process.iter_lines(stall_timeout=PROVISION_STALL_TIMEOUT_SECONDS):
+        for line in self._process.iter_lines(stall_timeout=self._stall_timeout):
             if self._cancel_requested:
                 self._process.terminate()
                 return False

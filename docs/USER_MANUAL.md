@@ -209,6 +209,36 @@ you explicitly confirm on the Provision dialog (see step 4 below).
    the file is lost. Progress streams live in the dialog's log, exactly
    like the main Upload console.
 
+### 5a. Provisioning a batch of devices at once
+
+Configuring Flash Encryption/Secure Boot and repeating steps 1–5 above for
+every device in a production batch works, but is tedious once you're past
+a handful of boards. **Tools → Provision Devices (Batch)...** does the
+same validate → confirm → burn sequence across every eligible device in
+one pass:
+
+1. Select the devices you want to provision in the device list (or select
+   none to consider every device in the project), then open **Tools →
+   Provision Devices (Batch)...**.
+2. The dialog runs the same pre-flight validation as the single-device
+   Provision dialog on each candidate. Devices that haven't enabled Flash
+   Encryption or Secure Boot at all are silently left out (there's nothing
+   to burn); devices that fail validation are shown in the table, greyed
+   out, with the reason why.
+3. Click **Validate & Provision N Device(s)...**. You get exactly one
+   confirmation gate — the same irreversible-burn checkbox, confirmation
+   phrase, and (if any device is burning a freshly generated key) key-backup
+   acknowledgement as the single-device dialog — covering the whole batch,
+   not one popup per device.
+4. Eligible devices burn eFuses in parallel, up to the **Max Parallel
+   Provisions** limit (Settings → Provisioning, default 4); the rest queue
+   and start automatically as running ones finish. Each row's status
+   updates live, and the shared log below the table tags every line with
+   the device it came from.
+
+As with regular flashing, a device already busy (mid-upload) is left out of
+the batch rather than provisioned concurrently with a flash in progress.
+
 Under the **Advanced** group, checking **"Also store generated keys in
 this computer's OS keychain (if available)"** additionally saves a copy of
 every freshly generated key into the OS's own credential store (Windows
@@ -373,6 +403,25 @@ overwriting each device's tags, it *adds* the tag you type to whatever
 tags each targeted device already has (no duplicates). See §21 "Device
 Groups & Tags" below for what tags are for.
 
+### Importing devices from CSV
+
+**Devices → Import Devices from CSV...** lets you populate the device
+list in one step from a spreadsheet instead of using **Add Device**
+repeatedly — handy when you have one row per unit off a production line
+already tracked elsewhere.
+
+The CSV needs a header row with a `name` column (required); `com_port`,
+`chip_type`, `baud_rate`, and `tags` (semicolon-separated, e.g.
+`Line A;RFID Batch`) are recognized if present but optional. Extra
+columns (notes, operator names, etc.) are ignored, so you don't need to
+clean up an existing tracking sheet before importing it. A row missing
+`name`, or with a `baud_rate` that isn't a whole number, is skipped and
+reported after the import finishes — the rest of the file still imports.
+
+If **Default Device Profile** is set in Settings → General, it's applied
+to every device imported this way, the same as it would be for a device
+added by hand.
+
 ## 11. Firmware Profiles
 
 **Devices → Firmware Profiles...** with a device selected lets you:
@@ -517,13 +566,17 @@ weeks later.
 
 ![Settings dialog](images/settings-dialog.png)
 
-**Tools → Settings...** is organized into two tabs:
+**Tools → Settings...** is organized into five tabs:
 
 **General:**
 - **Theme** — **System Default** (follows your OS's light/dark setting,
   live — no restart needed if you switch your OS theme while the app is
   open), or explicit **Dark**/**Light**.
 - Default baud rate and default flash mode for new devices.
+- **Default Device Profile** — optionally pick a saved Firmware Profile
+  (see §11) to automatically apply to every newly-added device, instead
+  of the app's built-in defaults. Leave on **(none)** to keep the
+  previous behavior.
 - **Auto-Save** — Disabled, or every 1/2/5/10 (default)/15/30 minutes. A
   brand-new project that hasn't been saved to disk yet is protected in a
   separate crash-recovery slot instead of a real save — see §22.
@@ -539,11 +592,49 @@ weeks later.
   location (leave blank to always use the same folder as `firmware.bin`),
   and the default **Post-Merge Action** pre-selected in the Merge Bins
   dialog (see §4 "Merging bins").
-
-A one-click **Open Logs Folder** button is also here if you need to send
-logs to support.
+- **Provisioning** (its own group within the General tab):
+  - **Max Parallel Provisions** — how many devices can have eFuses burned
+    at the same time during batch provisioning (§5a, default 8,
+    adjustable 1–32, matching Max Parallel Flashes so a bench sized for
+    parallel flashing doesn't unexpectedly bottleneck on provisioning).
+    Same queuing behavior as Max Parallel Flashes above.
+  - **Provision Stall Timeout** — how long (in seconds) an eFuse-burning
+    operation can go with no output before it's treated as unresponsive
+    and aborted (default 60s).
 
 **Sounds:** see §23 "Sounds & Notifications" below.
+
+**Advanced:** internals previously hardcoded, exposed for benches with
+unusual hardware or timing needs. Defaults match the app's previous
+built-in behavior, so leaving this tab untouched changes nothing.
+- **Port Scan Interval** — how often the app polls the OS for available
+  serial ports (default 2000 ms).
+- **Live Log Max Lines** — how many lines of live serial/console output
+  are kept on screen per device before older lines are dropped (default
+  10,000).
+- **Project Lock Stale After** — how old a project's `.lock` sidecar file
+  must be (with no matching running process on the same machine) before
+  it's treated as abandoned and the project can be reopened.
+
+**Diagnostics:**
+- **Enable structured JSON logging** — writes an additional
+  `events.jsonl` log alongside the four regular text logs, useful if you
+  pipe logs into a log-aggregation tool. Off by default; the text logs
+  are always written regardless of this setting.
+- **Open Logs Folder** — opens the log directory directly, if you need to
+  send logs to support.
+- **Export Diagnostics Bundle...** — saves a single `.zip` containing all
+  current log files plus app/OS/Python/`esptool` version information,
+  convenient to attach to a bug report. Also reachable from **Help →
+  Export Diagnostics Bundle...**.
+
+**Privacy:**
+- **Share anonymous usage & crash data** — off by default. See
+  `docs/PRIVACY.md` for exactly what is (and is not) recorded, and note
+  that this build stores events locally only — nothing is transmitted
+  over the network regardless of this setting.
+- **Clear Local Telemetry Data** — deletes any locally-recorded telemetry
+  events immediately.
 
 ## 16. Serial Monitor
 
@@ -774,6 +865,11 @@ of whether that event is enabled, so you can preview it before saving.
   selected (pick a specific chip, not "Auto", on Device Settings), or
   neither Enable Flash Encryption nor Enable Secure Boot is checked on the
   Security tab yet.
+- **"Validate & Provision..." is disabled / shows 0 devices in the Batch
+  Provision dialog** — same causes as above, applied per device: none of
+  the selected (or, if nothing's selected, project) devices have Flash
+  Encryption or Secure Boot enabled, or every candidate failed pre-flight
+  validation (check the reason shown in that device's row).
 - **Provisioning fails partway through with an eFuse-related error from
   espefuse** — this app deliberately does not retry or paper over eFuse
   errors; read the exact espefuse message in the Provision dialog's log

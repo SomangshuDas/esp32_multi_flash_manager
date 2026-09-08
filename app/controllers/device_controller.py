@@ -16,11 +16,12 @@ from PySide6.QtCore import QObject, Signal
 from app.logging_setup.logger import get_logger
 from app.models.device_model import DeviceConfig
 from app.models.project_model import ProjectModel
-from app.utilities.app_settings import get_settings
+from app.utilities.app_settings import get_default_device_profile_name, get_settings
 from app.utilities.constants import DEFAULT_BAUD, DEFAULT_FLASH_MODE
 
 if TYPE_CHECKING:
     from app.controllers.flash_controller import FlashController
+    from app.project_manager.csv_import import CsvImportResult
 
 logger = get_logger(__name__)
 
@@ -90,10 +91,56 @@ class DeviceController(QObject):
             baud_rate=int(settings.value("default_baud", DEFAULT_BAUD)),
             flash_mode=str(settings.value("default_flash_mode", DEFAULT_FLASH_MODE)),
         )
+        self._apply_default_profile(device)
         self.project.add_device(device)
         logger.info("Added device '%s' (%s)", device.name, device.id)
         self.device_added.emit(device.id)
         return device
+
+    def _apply_default_profile(self, device: DeviceConfig) -> None:
+        """If Settings -> General -> "Default Device Profile" names a saved
+        Firmware Profile, overlay its chip/flash settings and firmware
+        list onto `device` (Settings -> General). A missing/deleted
+        profile name (e.g. the user deleted the profile after selecting
+        it) is treated the same as "no default set" -- the device keeps
+        its already-applied Default Baud Rate/Flash Mode instead of
+        raising an error that would block adding a device entirely.
+        """
+        profile_name = get_default_device_profile_name()
+        if not profile_name:
+            return
+        from app.firmware_manager.profiles import list_profiles
+
+        for profile in list_profiles():
+            if profile.name == profile_name:
+                profile.apply_to_device(device)
+                logger.info(
+                    "Applied default device profile '%s' to new device '%s'", profile_name, device.name
+                )
+                return
+        logger.warning(
+            "Default device profile '%s' is configured but no longer exists; skipping", profile_name
+        )
+
+    def import_from_csv(self, csv_path: str) -> "CsvImportResult":
+        """Bulk-import devices from a CSV file (Devices -> Import Devices
+        from CSV...). Each successfully parsed row becomes a new device,
+        appended to the project the same way add_device() would, and
+        emits device_added for each one so the UI updates incrementally
+        rather than needing a full refresh. Returns the CsvImportResult
+        (imported devices + any per-row errors) so the caller can show a
+        summary -- partial success (some rows imported, some skipped) is
+        the common case for a real production CSV, not an edge case."""
+        from app.project_manager.csv_import import import_devices_from_csv
+
+        result = import_devices_from_csv(csv_path)
+        for device in result.devices:
+            self._apply_default_profile(device)
+            self.project.add_device(device)
+            self.device_added.emit(device.id)
+        if result.devices:
+            logger.info("Imported %d device(s) from CSV: %s", len(result.devices), csv_path)
+        return result
 
     def remove_device(self, device_id: str) -> None:
         device = self.get_device(device_id)

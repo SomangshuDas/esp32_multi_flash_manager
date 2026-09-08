@@ -9,7 +9,7 @@ and makes future firmware/chip support trivial to extend.
 from __future__ import annotations
 
 APP_NAME = "ESP32 Multi Flash Manager"
-APP_VERSION = "0.13.0"
+APP_VERSION = "0.14.0"
 ORG_NAME = "Somangshu Das"
 
 # --------------------------------------------------------------------------
@@ -163,6 +163,33 @@ MAX_PARALLEL_FLASHES_MAX = 64
 # bare literal (60.0) hardcoded directly in security_worker.py.
 PROVISION_STALL_TIMEOUT_SECONDS = 60.0
 
+# settings.json key letting the user tune PROVISION_STALL_TIMEOUT_SECONDS
+# from Settings -> Provisioning, mirroring
+# SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS above -- previously this value
+# had no user-facing override at all.
+SETTINGS_KEY_PROVISION_STALL_TIMEOUT_SECONDS = "provision_stall_timeout_seconds"
+PROVISION_STALL_TIMEOUT_MIN_SECONDS = 10.0
+PROVISION_STALL_TIMEOUT_MAX_SECONDS = 600.0
+
+# --------------------------------------------------------------------------
+# Batch provisioning (eFuse burning across multiple devices at once -- see
+# app/controllers/provision_controller.py). Mirrors MAX_PARALLEL_FLASHES:
+# provisioning previously only ever ran one device at a time (one
+# ProvisionDialog per device, opened manually), so a production batch with
+# security enabled meant repeating the whole confirm-and-burn flow by hand
+# for every device. Devices beyond this cap are queued (STATUS_QUEUED) and
+# launched one-for-one as running provisioning workers finish, for the same
+# OS-thread / USB-bandwidth reasons as parallel flashing. Aligned with
+# MAX_PARALLEL_FLASHES's default (both 8) so a bench sized for parallel
+# flashing doesn't unexpectedly bottleneck on provisioning throughput --
+# the per-batch irreversible-burn confirmation gate (PROVISION_CONFIRM_PHRASE)
+# is what actually limits blast radius, not a lower concurrency cap.
+# --------------------------------------------------------------------------
+MAX_PARALLEL_PROVISIONS = 8
+SETTINGS_KEY_MAX_PARALLEL_PROVISIONS = "max_parallel_provisions"
+MAX_PARALLEL_PROVISIONS_MIN = 1
+MAX_PARALLEL_PROVISIONS_MAX = 32
+
 # --------------------------------------------------------------------------
 # File / project extensions
 # --------------------------------------------------------------------------
@@ -239,6 +266,70 @@ ESPEFUSE_REEXEC_FLAG = "--_run-espefuse"
 MAX_RECENT_PROJECTS = 10
 PORT_SCAN_INTERVAL_MS = 2000
 LIVE_LOG_MAX_LINES = 10000
+
+# --------------------------------------------------------------------------
+# Advanced settings (Settings -> Advanced). These were previously bare
+# module-level constants with no user-facing override -- exposed here so a
+# bench with unusual hardware (e.g. a USB hub that enumerates slowly, or a
+# very long-running batch that wants a smaller live-log footprint) can tune
+# them without editing source and rebuilding. Each getter in app_settings.py
+# falls back to the literal below and clamps to its MIN/MAX pair, mirroring
+# the existing get_flash_stall_timeout_seconds()/get_max_parallel_flashes()
+# pattern.
+# --------------------------------------------------------------------------
+SETTINGS_KEY_PORT_SCAN_INTERVAL_MS = "port_scan_interval_ms"
+PORT_SCAN_INTERVAL_MS_MIN = 250
+PORT_SCAN_INTERVAL_MS_MAX = 30000
+
+SETTINGS_KEY_LIVE_LOG_MAX_LINES = "live_log_max_lines"
+LIVE_LOG_MAX_LINES_MIN = 500
+LIVE_LOG_MAX_LINES_MAX = 200000
+
+SETTINGS_KEY_PROJECT_LOCK_STALE_SECONDS = "project_lock_stale_seconds"
+PROJECT_LOCK_STALE_SECONDS_MIN = 5 * 60
+PROJECT_LOCK_STALE_SECONDS_MAX = 30 * 24 * 60 * 60
+
+# --------------------------------------------------------------------------
+# Structured JSON logging (app/logging_setup/logger.py, Settings -> Diagnostics)
+# --------------------------------------------------------------------------
+# Off by default: the four existing rotating text logs remain the primary,
+# always-on format. When enabled, a fifth rotating file (events.jsonl) mirrors
+# every log record as one JSON object per line, alongside (never instead of)
+# the text logs, for anyone piping logs into a log-aggregation/SIEM tool that
+# expects structured records rather than parsing the human-readable format.
+SETTINGS_KEY_JSON_LOGGING_ENABLED = "json_logging_enabled"
+DEFAULT_JSON_LOGGING_ENABLED = False
+JSON_LOG_FILENAME = "events.jsonl"
+
+# --------------------------------------------------------------------------
+# Opt-in anonymous usage/crash telemetry (app/utilities/telemetry.py,
+# Settings -> Privacy)
+# --------------------------------------------------------------------------
+# Off by default, per-install anonymous random id (no username/hostname/
+# device serials/firmware paths -- see telemetry.py's module docstring for
+# exactly what is and is not recorded). Recorded events are written locally
+# to telemetry_events.jsonl under the app-data folder; nothing is
+# transmitted over the network by this build (see telemetry.py docstring
+# and DEVELOPER_DOCUMENTATION.md for the documented extension point a
+# future release would use to actually upload them to a collection
+# endpoint).
+SETTINGS_KEY_TELEMETRY_ENABLED = "telemetry_enabled"
+DEFAULT_ENABLED_TELEMETRY = False
+SETTINGS_KEY_TELEMETRY_CLIENT_ID = "telemetry_client_id"
+TELEMETRY_LOG_FILENAME = "telemetry_events.jsonl"
+
+# --------------------------------------------------------------------------
+# Default Device Profile (app/controllers/device_controller.py,
+# Settings -> General)
+# --------------------------------------------------------------------------
+# Name of a saved FirmwareProfile (app/firmware_manager/profiles.py) that is
+# automatically applied to every newly-added device, so a bench that always
+# flashes the same handful of chip/firmware combinations doesn't need to
+# re-pick settings by hand on every "Add Device". Blank (the default) means
+# "no default -- new devices keep the app's ordinary built-in defaults",
+# preserving previous behavior for anyone who hasn't set one.
+SETTINGS_KEY_DEFAULT_DEVICE_PROFILE = "default_device_profile"
+DEFAULT_DEVICE_PROFILE_NONE = ""
 
 # --------------------------------------------------------------------------
 # Update checking (GitHub Releases)
@@ -563,3 +654,20 @@ DEVICE_SORT_LABELS = {
     DEVICE_SORT_NAME: "Sort: Name",
     DEVICE_SORT_TAG: "Sort: Tag",
 }
+
+# --------------------------------------------------------------------------
+# .emfm project-file input validation (app/project_manager/project_io.py) --
+# see docs/THREAT_MODEL.md for the full writeup. A .emfm file is treated as
+# untrusted input: it can arrive by email, USB stick, or a shared network
+# folder, and "Open Project" will parse whatever is pointed at it. These
+# caps exist purely to bound the cost of parsing/rendering a hostile or
+# corrupted file (a JSON bomb via deep nesting, or a "devices"/"firmware"
+# array with millions of entries) to something that fails fast with a
+# clear error instead of hanging the UI thread or exhausting memory. They
+# are deliberately generous relative to any real bench (the app's own
+# tooling doesn't get anywhere near these numbers) so no legitimate
+# project is ever rejected.
+# --------------------------------------------------------------------------
+MAX_PROJECT_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MiB of JSON is enormous for this schema
+MAX_DEVICES_PER_PROJECT = 2000
+MAX_FIRMWARE_ENTRIES_PER_DEVICE = 200

@@ -15,10 +15,11 @@ from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QTabWidget,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QSpinBox, QTabWidget,
     QVBoxLayout, QWidget,
 )
 
+from app.firmware_manager.profiles import list_profiles
 from app.logging_setup.logger import configure_logging
 from app.ui.widgets import make_scrollable
 from app.utilities.app_settings import get_settings
@@ -28,8 +29,11 @@ from app.utilities.constants import (
     BAUD_RATES,
     DEFAULT_AUTOSAVE_INTERVAL_MINUTES,
     DEFAULT_BAUD,
+    DEFAULT_DEVICE_PROFILE_NONE,
     DEFAULT_ENABLED_SOUND_EVENTS,
+    DEFAULT_ENABLED_TELEMETRY,
     DEFAULT_FLASH_MODE,
+    DEFAULT_JSON_LOGGING_ENABLED,
     DEFAULT_MERGE_OUTPUT_LOCATION,
     DEFAULT_MERGE_POST_ACTION,
     DEFAULT_MERGED_BIN_FILENAME,
@@ -39,27 +43,52 @@ from app.utilities.constants import (
     FLASH_STALL_TIMEOUT_MAX_SECONDS,
     FLASH_STALL_TIMEOUT_MIN_SECONDS,
     FLASH_STALL_TIMEOUT_SECONDS,
+    LIVE_LOG_MAX_LINES,
+    LIVE_LOG_MAX_LINES_MAX,
+    LIVE_LOG_MAX_LINES_MIN,
     MAX_PARALLEL_FLASHES,
     MAX_PARALLEL_FLASHES_MAX,
     MAX_PARALLEL_FLASHES_MIN,
+    MAX_PARALLEL_PROVISIONS,
+    MAX_PARALLEL_PROVISIONS_MAX,
+    MAX_PARALLEL_PROVISIONS_MIN,
     MERGE_POST_ACTION_LABELS,
     MERGE_POST_ACTIONS,
+    PORT_SCAN_INTERVAL_MS,
+    PORT_SCAN_INTERVAL_MS_MAX,
+    PORT_SCAN_INTERVAL_MS_MIN,
+    PROJECT_LOCK_STALE_SECONDS,
+    PROJECT_LOCK_STALE_SECONDS_MAX,
+    PROJECT_LOCK_STALE_SECONDS_MIN,
+    PROVISION_STALL_TIMEOUT_MAX_SECONDS,
+    PROVISION_STALL_TIMEOUT_MIN_SECONDS,
+    PROVISION_STALL_TIMEOUT_SECONDS,
     SETTINGS_KEY_AUTOSAVE_INTERVAL,
+    SETTINGS_KEY_DEFAULT_DEVICE_PROFILE,
     SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS,
+    SETTINGS_KEY_JSON_LOGGING_ENABLED,
+    SETTINGS_KEY_LIVE_LOG_MAX_LINES,
     SETTINGS_KEY_MAX_PARALLEL_FLASHES,
+    SETTINGS_KEY_MAX_PARALLEL_PROVISIONS,
     SETTINGS_KEY_MERGE_DEFAULT_FILENAME,
     SETTINGS_KEY_MERGE_DEFAULT_LOCATION,
     SETTINGS_KEY_MERGE_POST_ACTION,
+    SETTINGS_KEY_PORT_SCAN_INTERVAL_MS,
+    SETTINGS_KEY_PROJECT_LOCK_STALE_SECONDS,
+    SETTINGS_KEY_PROVISION_STALL_TIMEOUT_SECONDS,
     SETTINGS_KEY_SOUND_EVENT_ENABLED_PREFIX,
     SETTINGS_KEY_SOUND_EVENT_PATH_PREFIX,
     SETTINGS_KEY_SOUNDS_ENABLED,
+    SETTINGS_KEY_TELEMETRY_ENABLED,
     SETTINGS_KEY_THEME,
     SOUND_EVENT_LABELS,
     SOUND_EVENTS,
     THEME_OPTION_LABELS,
     THEME_OPTIONS,
 )
+from app.utilities.diagnostics import export_diagnostics_bundle
 from app.utilities.sound_player import play_preview_sound
+from app.utilities.telemetry import clear_local_telemetry
 
 
 class SettingsDialog(QDialog):
@@ -76,6 +105,9 @@ class SettingsDialog(QDialog):
 
         tabs.addTab(self._build_general_tab(), "General")
         tabs.addTab(self._build_sounds_tab(), "Sounds")
+        tabs.addTab(self._build_advanced_tab(), "Advanced")
+        tabs.addTab(self._build_diagnostics_tab(), "Diagnostics")
+        tabs.addTab(self._build_privacy_tab(), "Privacy")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -132,6 +164,21 @@ class SettingsDialog(QDialog):
         )
         form.addRow("Max Parallel Flashes:", self.max_parallel_spin)
 
+        # ---- Default Device Profile ----
+        self.default_profile_combo = QComboBox()
+        self.default_profile_combo.addItem("(none)", DEFAULT_DEVICE_PROFILE_NONE)
+        for profile in list_profiles():
+            self.default_profile_combo.addItem(profile.name, profile.name)
+        current_default_profile = self.settings.value(SETTINGS_KEY_DEFAULT_DEVICE_PROFILE, DEFAULT_DEVICE_PROFILE_NONE)
+        default_profile_index = self.default_profile_combo.findData(current_default_profile)
+        self.default_profile_combo.setCurrentIndex(default_profile_index if default_profile_index >= 0 else 0)
+        self.default_profile_combo.setToolTip(
+            "Automatically apply this Firmware Profile's settings and firmware list to every "
+            "newly-added device, instead of the app's built-in defaults."
+        )
+        form.addRow("Default Device Profile:", self.default_profile_combo)
+        self.default_profile_combo.setAccessibleName("Default Device Profile")
+
         # ---- Auto-Save ----
         self.autosave_combo = QComboBox()
         for minutes in AUTOSAVE_INTERVAL_OPTIONS:
@@ -177,11 +224,163 @@ class SettingsDialog(QDialog):
 
         layout.addLayout(form)
 
+        # ---- Provisioning (eFuse burning) ----
+        provisioning_box = QGroupBox("Provisioning")
+        provisioning_form = QFormLayout(provisioning_box)
+
+        self.max_parallel_provisions_spin = QSpinBox()
+        self.max_parallel_provisions_spin.setRange(MAX_PARALLEL_PROVISIONS_MIN, MAX_PARALLEL_PROVISIONS_MAX)
+        self.max_parallel_provisions_spin.setToolTip(
+            "How many devices can have eFuses burned at the same time during batch provisioning "
+            "(Tools -> Provision Devices (Batch)...). Devices beyond this cap wait in a queue and "
+            "start automatically as running devices finish."
+        )
+        self.max_parallel_provisions_spin.setValue(
+            int(self.settings.value(SETTINGS_KEY_MAX_PARALLEL_PROVISIONS, MAX_PARALLEL_PROVISIONS))
+        )
+        provisioning_form.addRow("Max Parallel Provisions:", self.max_parallel_provisions_spin)
+
+        self.provision_stall_timeout_spin = QDoubleSpinBox()
+        self.provision_stall_timeout_spin.setDecimals(0)
+        self.provision_stall_timeout_spin.setRange(
+            PROVISION_STALL_TIMEOUT_MIN_SECONDS, PROVISION_STALL_TIMEOUT_MAX_SECONDS
+        )
+        self.provision_stall_timeout_spin.setSuffix(" s")
+        self.provision_stall_timeout_spin.setToolTip(
+            "How long an eFuse-burning (espefuse) operation can go with no output before it's "
+            "treated as an unresponsive/disconnected device and aborted."
+        )
+        self.provision_stall_timeout_spin.setValue(
+            float(self.settings.value(SETTINGS_KEY_PROVISION_STALL_TIMEOUT_SECONDS, PROVISION_STALL_TIMEOUT_SECONDS))
+        )
+        provisioning_form.addRow("Provision Stall Timeout:", self.provision_stall_timeout_spin)
+
+        layout.addWidget(provisioning_box)
+
         logs_button = QPushButton("Open Logs Folder")
         logs_button.clicked.connect(self._open_logs_folder)
         layout.addWidget(logs_button)
         layout.addStretch(1)
 
+        return make_scrollable(content)
+
+    def _build_advanced_tab(self) -> QWidget:
+        """Previously-hardcoded internals exposed for benches with unusual
+        hardware/timing needs. Defaults match the app's previous
+        hardcoded behavior, so leaving this tab untouched changes nothing."""
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        form = QFormLayout()
+
+        self.port_scan_interval_spin = QSpinBox()
+        self.port_scan_interval_spin.setRange(PORT_SCAN_INTERVAL_MS_MIN, PORT_SCAN_INTERVAL_MS_MAX)
+        self.port_scan_interval_spin.setSuffix(" ms")
+        self.port_scan_interval_spin.setSingleStep(250)
+        self.port_scan_interval_spin.setToolTip(
+            "How often the app polls the OS for available serial ports. Lower values notice a "
+            "plugged/unplugged device sooner at the cost of slightly more CPU/USB polling."
+        )
+        self.port_scan_interval_spin.setValue(
+            int(self.settings.value(SETTINGS_KEY_PORT_SCAN_INTERVAL_MS, PORT_SCAN_INTERVAL_MS))
+        )
+        form.addRow("Port Scan Interval:", self.port_scan_interval_spin)
+        self.port_scan_interval_spin.setAccessibleName("Port Scan Interval")
+
+        self.live_log_max_lines_spin = QSpinBox()
+        self.live_log_max_lines_spin.setRange(LIVE_LOG_MAX_LINES_MIN, LIVE_LOG_MAX_LINES_MAX)
+        self.live_log_max_lines_spin.setSingleStep(500)
+        self.live_log_max_lines_spin.setToolTip(
+            "How many lines of live serial/console output are kept on screen per device before "
+            "older lines are dropped. Lower values use less memory on a bench with many devices."
+        )
+        self.live_log_max_lines_spin.setValue(
+            int(self.settings.value(SETTINGS_KEY_LIVE_LOG_MAX_LINES, LIVE_LOG_MAX_LINES))
+        )
+        form.addRow("Live Log Max Lines:", self.live_log_max_lines_spin)
+        self.live_log_max_lines_spin.setAccessibleName("Live Log Max Lines")
+
+        self.lock_stale_spin = QSpinBox()
+        self.lock_stale_spin.setRange(PROJECT_LOCK_STALE_SECONDS_MIN, PROJECT_LOCK_STALE_SECONDS_MAX)
+        self.lock_stale_spin.setSuffix(" s")
+        self.lock_stale_spin.setSingleStep(60)
+        self.lock_stale_spin.setToolTip(
+            "How old a project's .lock sidecar file must be (with no matching running process on "
+            "the same machine) before it's treated as abandoned and the project can be reopened."
+        )
+        self.lock_stale_spin.setValue(
+            int(self.settings.value(SETTINGS_KEY_PROJECT_LOCK_STALE_SECONDS, PROJECT_LOCK_STALE_SECONDS))
+        )
+        form.addRow("Project Lock Stale After:", self.lock_stale_spin)
+        self.lock_stale_spin.setAccessibleName("Project Lock Stale After")
+
+        layout.addLayout(form)
+        layout.addStretch(1)
+        return make_scrollable(content)
+
+    def _build_diagnostics_tab(self) -> QWidget:
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.json_logging_check = QCheckBox("Enable structured JSON logging (events.jsonl)")
+        self.json_logging_check.setAccessibleName("Enable structured JSON logging")
+        self.json_logging_check.setToolTip(
+            "In addition to the four regular text log files, also write every log record as one "
+            "JSON object per line to events.jsonl -- useful if you pipe logs into a log-aggregation "
+            "tool. The text logs are always written regardless of this setting."
+        )
+        self.json_logging_check.setChecked(
+            bool(self.settings.value(SETTINGS_KEY_JSON_LOGGING_ENABLED, DEFAULT_JSON_LOGGING_ENABLED, type=bool))
+        )
+        layout.addWidget(self.json_logging_check)
+
+        logs_button = QPushButton("Open Logs Folder")
+        logs_button.clicked.connect(self._open_logs_folder)
+        layout.addWidget(logs_button)
+
+        bundle_button = QPushButton("Export Diagnostics Bundle...")
+        bundle_button.setAccessibleName("Export Diagnostics Bundle")
+        bundle_button.setToolTip(
+            "Save a single .zip containing all current log files plus app/OS/Python/esptool "
+            "version information -- convenient to attach to a bug report."
+        )
+        bundle_button.clicked.connect(self._export_diagnostics_bundle)
+        layout.addWidget(bundle_button)
+
+        layout.addStretch(1)
+        return make_scrollable(content)
+
+    def _build_privacy_tab(self) -> QWidget:
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.telemetry_check = QCheckBox("Share anonymous usage & crash data")
+        self.telemetry_check.setAccessibleName("Share anonymous usage and crash data")
+        self.telemetry_check.setChecked(
+            bool(self.settings.value(SETTINGS_KEY_TELEMETRY_ENABLED, DEFAULT_ENABLED_TELEMETRY, type=bool))
+        )
+        layout.addWidget(self.telemetry_check)
+
+        note = QLabel(
+            "Off by default. When enabled, a small number of coarse events (e.g. \"a flash batch "
+            "finished\", with a device count and success/failure counts) are recorded locally to "
+            "help understand how the app is used. Recorded events never include device serial "
+            "numbers, COM port names, firmware file names/paths, or project names. This build does "
+            "not transmit anything over the network -- events are stored locally only. See "
+            "docs/PRIVACY.md for full details."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #8a8f98; font-size: 11px;")
+        layout.addWidget(note)
+
+        clear_button = QPushButton("Clear Local Telemetry Data")
+        clear_button.setAccessibleName("Clear Local Telemetry Data")
+        clear_button.clicked.connect(self._clear_local_telemetry)
+        layout.addWidget(clear_button)
+
+        layout.addStretch(1)
         return make_scrollable(content)
 
     def _build_sounds_tab(self) -> QWidget:
@@ -250,6 +449,24 @@ class SettingsDialog(QDialog):
         log_dir = configure_logging()
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir)))
 
+    def _export_diagnostics_bundle(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Diagnostics Bundle", "diagnostics_bundle.zip", "Zip Files (*.zip)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
+        if not path:
+            return
+        try:
+            export_diagnostics_bundle(path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Export Failed", f"Could not write diagnostics bundle:\n{exc}")
+            return
+        QMessageBox.information(self, "Diagnostics Bundle Exported", f"Saved to:\n{path}")
+
+    def _clear_local_telemetry(self) -> None:
+        clear_local_telemetry()
+        QMessageBox.information(self, "Telemetry Data Cleared", "Local telemetry data has been deleted.")
+
     def selected_theme(self) -> str:
         return self.theme_combo.currentData()
 
@@ -259,13 +476,26 @@ class SettingsDialog(QDialog):
         self.settings.setValue("default_flash_mode", self.flash_mode_combo.currentText())
         self.settings.setValue(SETTINGS_KEY_FLASH_STALL_TIMEOUT_SECONDS, self.stall_timeout_spin.value())
         self.settings.setValue(SETTINGS_KEY_MAX_PARALLEL_FLASHES, self.max_parallel_spin.value())
+        self.settings.setValue(SETTINGS_KEY_DEFAULT_DEVICE_PROFILE, self.default_profile_combo.currentData())
         self.settings.setValue(SETTINGS_KEY_AUTOSAVE_INTERVAL, int(self.autosave_combo.currentData()))
         self.settings.setValue(SETTINGS_KEY_MERGE_DEFAULT_FILENAME, self.merge_filename_edit.text().strip() or DEFAULT_MERGED_BIN_FILENAME)
         self.settings.setValue(SETTINGS_KEY_MERGE_DEFAULT_LOCATION, self.merge_location_edit.text().strip())
         self.settings.setValue(SETTINGS_KEY_MERGE_POST_ACTION, self.merge_post_action_combo.currentData())
+
+        self.settings.setValue(SETTINGS_KEY_MAX_PARALLEL_PROVISIONS, self.max_parallel_provisions_spin.value())
+        self.settings.setValue(
+            SETTINGS_KEY_PROVISION_STALL_TIMEOUT_SECONDS, self.provision_stall_timeout_spin.value()
+        )
 
         self.settings.setValue(SETTINGS_KEY_SOUNDS_ENABLED, self.sounds_enabled_check.isChecked())
         for event, check in self._sound_event_checks.items():
             self.settings.setValue(f"{SETTINGS_KEY_SOUND_EVENT_ENABLED_PREFIX}{event}", check.isChecked())
         for event, path_edit in self._sound_event_paths.items():
             self.settings.setValue(f"{SETTINGS_KEY_SOUND_EVENT_PATH_PREFIX}{event}", path_edit.text().strip())
+
+        self.settings.setValue(SETTINGS_KEY_PORT_SCAN_INTERVAL_MS, self.port_scan_interval_spin.value())
+        self.settings.setValue(SETTINGS_KEY_LIVE_LOG_MAX_LINES, self.live_log_max_lines_spin.value())
+        self.settings.setValue(SETTINGS_KEY_PROJECT_LOCK_STALE_SECONDS, self.lock_stale_spin.value())
+
+        self.settings.setValue(SETTINGS_KEY_JSON_LOGGING_ENABLED, self.json_logging_check.isChecked())
+        self.settings.setValue(SETTINGS_KEY_TELEMETRY_ENABLED, self.telemetry_check.isChecked())

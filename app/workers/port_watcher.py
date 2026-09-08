@@ -15,7 +15,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from app.device_manager.port_scanner import PortInfo, list_available_ports
 from app.logging_setup.logger import get_logger
-from app.utilities.constants import PORT_SCAN_INTERVAL_MS
+from app.utilities.app_settings import get_port_scan_interval_ms
 
 logger = get_logger(__name__)
 
@@ -36,14 +36,16 @@ class PortWatcher(QObject):
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._timer = QTimer(self)
-        self._timer.setInterval(PORT_SCAN_INTERVAL_MS)
+        self._timer.setInterval(get_port_scan_interval_ms())
         self._timer.timeout.connect(self._poll)
         self._known_ports: set[str] = set()
 
     def start(self) -> None:
         self._poll()  # immediate first scan so the UI isn't empty on launch
         self._timer.start()
-        logger.info("PortWatcher started (interval=%dms)", PORT_SCAN_INTERVAL_MS)
+        interval = get_port_scan_interval_ms()
+        self._timer.setInterval(interval)
+        logger.info("PortWatcher started (interval=%dms)", interval)
 
     def stop(self) -> None:
         self._timer.stop()

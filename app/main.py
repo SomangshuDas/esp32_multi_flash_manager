@@ -68,7 +68,7 @@ from app.utilities.constants import (
     PROJECT_FILE_EXTENSION,
     PROJECT_FILE_EXTENSION_LEGACY,
 )
-from app.utilities.helpers import get_app_data_dir, resource_path
+from app.utilities.helpers import get_app_data_dir, mark_file_hidden, resource_path
 
 assert ESPTOOL_REEXEC_FLAG == _ESPTOOL_REEXEC_FLAG, (
     "app.utilities.constants.ESPTOOL_REEXEC_FLAG must match main.py's fast-path "
@@ -187,10 +187,26 @@ def _acquire_single_instance_lock() -> QLockFile | None:
     collected or the process exits), or None if another instance already
     holds it.
     """
-    lock_path = get_app_data_dir() / "app.lock"
+    # A dotted name isn't enough on its own -- Windows Explorer doesn't
+    # treat a leading dot as significant, unlike Linux/macOS -- so this
+    # also needs the real hidden-file attribute set (see
+    # mark_file_hidden's docstring). Previously this was named "app.lock"
+    # with no leading dot and was never hidden at all, leaving a stray
+    # always-present file sitting in plain sight in the app-data folder
+    # for the whole time the app was running (and behind, unhidden, if a
+    # crash ever left it orphaned).
+    lock_path = get_app_data_dir() / ".app.lock"
     lock_file = QLockFile(str(lock_path))
     lock_file.setStaleLockTime(0)  # a lock left by a crashed process never blocks forever
     if lock_file.tryLock(100):
+        mark_file_hidden(lock_path)
+        # Best-effort cleanup of the old, unhidden "app.lock" name from
+        # before this fix, if a previous install left one behind.
+        old_lock_path = get_app_data_dir() / "app.lock"
+        try:
+            old_lock_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         return lock_file
     return None
 

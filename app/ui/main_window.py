@@ -53,6 +53,7 @@ from app.flash_engine.validator import validate_devices
 from app.logging_setup.logger import get_logger
 from app.project_manager.project_io import clear_recent_projects, get_recent_projects
 from app.ui.batch_edit_dialog import BatchEditDialog
+from app.ui.batch_provision_dialog import BatchProvisionDialog
 from app.ui.dashboard import DashboardWidget
 from app.ui.device_panel import DevicePanel
 from app.ui.device_settings_widget import DeviceSettingsWidget
@@ -69,8 +70,9 @@ from app.ui.settings_dialog import SettingsDialog
 from app.ui.shortcuts_dialog import ShortcutsDialog
 from app.ui.theme import stylesheet_for
 from app.ui.validation_dialog import ValidationReportDialog
-from app.utilities.app_settings import get_settings
+from app.utilities.app_settings import get_live_log_max_lines, get_settings
 from app.utilities.chip_detect import detect_supported_chips, find_unsupported_chips
+from app.utilities.diagnostics import export_diagnostics_bundle
 from app.utilities.constants import (
     APP_NAME,
     APP_VERSION,
@@ -83,7 +85,6 @@ from app.utilities.constants import (
     DEVICE_SORT_ORDER_ADDED,
     DEVICE_SORT_OPTIONS,
     DEVICE_SORT_TAG,
-    LIVE_LOG_MAX_LINES,
     PROJECT_FILE_EXTENSION,
     PROJECT_FILE_EXTENSION_LEGACY,
     PROJECT_FILE_FILTER,
@@ -260,6 +261,9 @@ class MainWindow(QMainWindow):
         )
         batch_edit_action = self._add_action(devices_menu, "Batch Edit...", "", self._on_batch_edit, action_id="batch_edit")
         profiles_action = self._add_action(devices_menu, "Firmware Profiles...", "", self._on_open_profiles)
+        import_csv_action = self._add_action(
+            devices_menu, "Import Devices from CSV...", "", self._on_import_devices_from_csv,
+        )
         devices_menu.addSeparator()
         assign_firmware_action = self._add_action(
             devices_menu, "Assign Firmware Set to Devices...", "",
@@ -268,7 +272,9 @@ class MainWindow(QMainWindow):
         # These all mutate ports/firmware/flash settings across one or more
         # devices, so Settings Lock disables them alongside
         # the Firmware/Device Settings panels themselves.
-        self._factory_lock_actions.extend([batch_edit_action, profiles_action, assign_firmware_action])
+        self._factory_lock_actions.extend(
+            [batch_edit_action, profiles_action, assign_firmware_action, import_csv_action]
+        )
 
         # ---- Flash menu ----
         # "Fl&ash" (accelerator "A"), not "&Flash" -- "&F" was already
@@ -302,6 +308,14 @@ class MainWindow(QMainWindow):
         self._add_action(
             tools_menu, "Read Flash / eFuse / Chip Info...", "", self._on_open_read_device_dialog,
         )
+        provision_batch_action = self._add_action(
+            tools_menu, "Provision Devices (Batch)...", "", self._on_open_batch_provision_dialog,
+            action_id="provision_batch",
+        )
+        # Burns eFuses across multiple devices at once -- irreversible, so
+        # it's gated behind Settings Lock the same as the other batch
+        # mutation actions (Batch Edit, Assign Firmware Set, ...).
+        self._factory_lock_actions.append(provision_batch_action)
         tools_menu.addSeparator()
         self._add_action(tools_menu, "Set Interface Lock Key...", "", self._on_set_lock_key)
         lock_menu = tools_menu.addMenu("Lock Interface")
@@ -314,6 +328,8 @@ class MainWindow(QMainWindow):
         # ---- Help menu ----
         help_menu = menu_bar.addMenu("&Help")
         self._add_action(help_menu, "User Manual", "", self._on_open_user_manual)
+        help_menu.addSeparator()
+        self._add_action(help_menu, "Export Diagnostics Bundle...", "", self._on_export_diagnostics_bundle)
         help_menu.addSeparator()
         self._add_action(help_menu, "About", "", self._on_about)
 
@@ -574,6 +590,28 @@ class MainWindow(QMainWindow):
             self.settings_widget.set_device(device)
             self.device_panel.update_device_summary(device)
             self.project_controller.mark_dirty()
+
+    def _on_import_devices_from_csv(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Devices from CSV", "", "CSV Files (*.csv)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
+        if not path:
+            return
+        try:
+            result = self.device_controller.import_from_csv(path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Import Failed", f"Could not read CSV file:\n{exc}")
+            return
+
+        summary = f"Imported {result.imported_count} device(s)."
+        if result.errors:
+            shown_errors = result.errors[:10]
+            more = f"\n... and {len(result.errors) - 10} more" if len(result.errors) > 10 else ""
+            summary += "\n\nSkipped row(s):\n" + "\n".join(shown_errors) + more
+            QMessageBox.warning(self, "Import Devices from CSV", summary)
+        else:
+            QMessageBox.information(self, "Import Devices from CSV", summary)
 
     def _on_batch_edit(self) -> None:
         selected_ids = self.device_panel.selected_device_ids()
@@ -955,8 +993,9 @@ class MainWindow(QMainWindow):
         # closed) always replays full history instead of appearing blank.
         buffer = self._device_log_buffers.setdefault(device_id, [])
         buffer.append(line)
-        if len(buffer) > LIVE_LOG_MAX_LINES:
-            del buffer[: len(buffer) - LIVE_LOG_MAX_LINES]
+        max_lines = get_live_log_max_lines()
+        if len(buffer) > max_lines:
+            del buffer[: len(buffer) - max_lines]
         console = self._live_consoles.get(device_id)
         if console is not None:
             console.append_line(line)
@@ -1332,6 +1371,34 @@ class MainWindow(QMainWindow):
             self.security_widget.refresh_display()
         self.project_controller.mark_dirty()
 
+    def _on_open_batch_provision_dialog(self) -> None:
+        """Tools menu entry point: burns eFuses on multiple devices at
+        once -- see app/ui/batch_provision_dialog.py. Candidates are the
+        currently selected devices (or every device if none are
+        selected); devices that aren't configured for provisioning, fail
+        pre-flight validation, or are currently busy flashing are
+        excluded (the busy ones are silently dropped here since
+        BatchProvisionDialog itself has no visibility into flash state)."""
+        selected_ids = self.device_panel.selected_device_ids()
+        all_devices = self.device_controller.devices()
+        candidates = [d for d in all_devices if d.id in selected_ids] if selected_ids else all_devices
+        if not candidates:
+            QMessageBox.information(self, "Provision Devices (Batch)", "Add a device first.")
+            return
+
+        busy_ids = {d.id for d in candidates if self.flash_controller.is_busy(d.id)}
+        if busy_ids:
+            candidates = [d for d in candidates if d.id not in busy_ids]
+
+        dialog = BatchProvisionDialog(candidates, self)
+        dialog.exec()
+        # Same reasoning as _on_provision_requested above, applied across
+        # every device the batch may have touched.
+        current_id = self.security_widget.current_device_id()
+        if current_id and any(d.id == current_id for d in candidates):
+            self.security_widget.refresh_display()
+        self.project_controller.mark_dirty()
+
     def _open_serial_monitor_for_port(self, port: str, baud: int | None = None) -> None:
         if port in self._busy_ports():
             QMessageBox.warning(
@@ -1418,6 +1485,20 @@ class MainWindow(QMainWindow):
 
     def _on_open_user_manual(self) -> None:
         QDesktopServices.openUrl(QUrl(USER_MANUAL_URL))
+
+    def _on_export_diagnostics_bundle(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Diagnostics Bundle", "diagnostics_bundle.zip", "Zip Files (*.zip)",
+            options=QFileDialog.Option.DontUseNativeDialog,
+        )
+        if not path:
+            return
+        try:
+            export_diagnostics_bundle(path)
+        except OSError as exc:
+            QMessageBox.critical(self, "Export Failed", f"Could not write diagnostics bundle:\n{exc}")
+            return
+        QMessageBox.information(self, "Diagnostics Bundle Exported", f"Saved to:\n{path}")
 
     def _apply_theme(self, theme_name: str) -> None:
         """Apply `theme_name` ("system"/"dark"/"light") and persist the

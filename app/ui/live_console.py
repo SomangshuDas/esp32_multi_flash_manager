@@ -27,7 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from app.ui.widgets import make_scrollable
-from app.utilities.constants import LIVE_LOG_MAX_LINES, STATUS_COLORS, STATUS_WAITING
+from app.utilities.app_settings import get_live_log_max_lines
+from app.utilities.constants import STATUS_COLORS, STATUS_WAITING
 from app.utilities.helpers import safe_filename, timestamp_now
 
 
@@ -89,7 +90,7 @@ class LiveConsoleWidget(QWidget):
 
         self.text_edit = QPlainTextEdit()
         self.text_edit.setReadOnly(True)
-        self.text_edit.setMaximumBlockCount(LIVE_LOG_MAX_LINES)
+        self.text_edit.setMaximumBlockCount(get_live_log_max_lines())
         self.text_edit.setStyleSheet("font-family: Consolas, 'Courier New', monospace; font-size: 12px;")
         # Long esptool lines wrap to the widget width so every character is
         # always visible without needing to scroll sideways.

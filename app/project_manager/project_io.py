@@ -20,14 +20,16 @@ from pathlib import Path
 
 from app.logging_setup.logger import get_logger
 from app.models.project_model import ProjectModel
-from app.utilities.app_settings import get_settings
+from app.utilities.app_settings import get_project_lock_stale_seconds, get_settings
 from app.utilities.constants import (
     APP_VERSION,
     AUTOSAVE_RECOVERY_DIRNAME,
     AUTOSAVE_RECOVERY_FILENAME,
+    MAX_DEVICES_PER_PROJECT,
+    MAX_FIRMWARE_ENTRIES_PER_DEVICE,
+    MAX_PROJECT_FILE_SIZE_BYTES,
     MAX_RECENT_PROJECTS,
     PROJECT_LOCK_FILE_SUFFIX,
-    PROJECT_LOCK_STALE_SECONDS,
 )
 from app.utilities.helpers import clear_file_hidden, get_app_data_dir, mark_file_hidden
 
@@ -131,6 +133,44 @@ def _relativize_firmware_paths(data: dict, base_dir: Path) -> dict:
     return data
 
 
+def _validate_project_shape(raw: object) -> None:
+    """Cheap, pre-ProjectModel structural sanity checks on parsed JSON
+    from an untrusted .emfm file -- see docs/THREAT_MODEL.md. Bounds the
+    number of devices and firmware entries per device before any
+    DeviceConfig/FirmwareEntry objects are constructed or the UI tries to
+    render them, so a hostile/corrupted file with e.g. a million-entry
+    "devices" array fails fast with a clear message instead of hanging
+    the UI thread or exhausting memory building objects for it.
+
+    Deliberately permissive about *type* mismatches here (e.g. "devices"
+    being a string instead of a list) -- that's ProjectModel.from_dict's
+    job to catch and report as a structure error; this function only
+    guards against a shape that is technically valid JSON but
+    pathologically large.
+    """
+    if not isinstance(raw, dict):
+        return
+    devices = raw.get("devices")
+    if not isinstance(devices, list):
+        return
+    if len(devices) > MAX_DEVICES_PER_PROJECT:
+        raise ProjectLoadError(
+            f"This project file lists {len(devices)} devices, which is more than the "
+            f"{MAX_DEVICES_PER_PROJECT} supported. It may be corrupted, or not actually a "
+            "project file."
+        )
+    for device in devices:
+        if not isinstance(device, dict):
+            continue
+        firmware = device.get("firmware")
+        if isinstance(firmware, list) and len(firmware) > MAX_FIRMWARE_ENTRIES_PER_DEVICE:
+            raise ProjectLoadError(
+                f"A device in this project file lists {len(firmware)} firmware entries, which is "
+                f"more than the {MAX_FIRMWARE_ENTRIES_PER_DEVICE} supported per device. It may be "
+                "corrupted, or not actually a project file."
+            )
+
+
 def _absolutize_firmware_paths(data: dict, base_dir: Path) -> dict:
     devices = data.get("devices")
     if not isinstance(devices, list):
@@ -196,6 +236,21 @@ def load_project(file_path: str) -> ProjectModel:
         raise ProjectLoadError(f"Project file not found:\n{file_path}")
 
     try:
+        file_size = path.stat().st_size
+    except OSError as exc:
+        raise ProjectLoadError(f"Could not read project file:\n{exc}") from exc
+    if file_size > MAX_PROJECT_FILE_SIZE_BYTES:
+        # Rejected before json.load() ever runs -- deliberately checked on
+        # the raw file size, not after parsing, so a hostile/corrupted
+        # multi-gigabyte file can't consume memory or CPU parsing it just
+        # to be rejected afterwards. See docs/THREAT_MODEL.md.
+        raise ProjectLoadError(
+            f"This project file is {file_size / (1024 * 1024):.1f} MB, which is larger than the "
+            f"{MAX_PROJECT_FILE_SIZE_BYTES / (1024 * 1024):.0f} MB expected for a project file. "
+            "It may be corrupted, or not actually a project file."
+        )
+
+    try:
         with path.open("r", encoding="utf-8") as handle:
             raw = json.load(handle)
     except (OSError, ValueError) as exc:
@@ -208,6 +263,8 @@ def load_project(file_path: str) -> ProjectModel:
         raise ProjectLoadError(
             f"This project file is corrupted or not valid JSON:\n{exc}"
         ) from exc
+
+    _validate_project_shape(raw)
 
     if isinstance(raw, dict):
         raw = _absolutize_firmware_paths(raw, path.parent)
@@ -336,7 +393,7 @@ def _lock_is_stale(info: ProjectLockInfo) -> bool:
     except ValueError:
         return True
     age_seconds = (datetime.now().astimezone() - acquired).total_seconds()
-    if age_seconds > PROJECT_LOCK_STALE_SECONDS:
+    if age_seconds > get_project_lock_stale_seconds():
         return True
     # PIDs are only meaningfully comparable on the same host as the one
     # that created the lock -- a lock from a different host is left
