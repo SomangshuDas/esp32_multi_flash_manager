@@ -88,6 +88,19 @@ class TestBatchEditRefusesBusyDevices:
         monkeypatch.setattr(window.device_panel, "rebuild", lambda devices: None)
         monkeypatch.setattr("app.ui.main_window.QMessageBox.warning", lambda *a, **k: None)
 
+        class FakePreviewDialog:
+            def __init__(self, *a, **k):
+                pass
+
+            def exec(self):
+                return self.DialogCode.Accepted
+
+            class DialogCode:
+                Accepted = 1
+                Rejected = 0
+
+        monkeypatch.setattr("app.ui.main_window.ChangePreviewDialog", FakePreviewDialog)
+
         class FakeDialog:
             def __init__(self, *a, **k):
                 pass

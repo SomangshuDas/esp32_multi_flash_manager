@@ -301,6 +301,26 @@ def get_project_lock_stale_seconds() -> int:
     return max(PROJECT_LOCK_STALE_SECONDS_MIN, min(PROJECT_LOCK_STALE_SECONDS_MAX, value))
 
 
+def get_undo_stack_depth() -> int:
+    """Return the configured max number of undo/redo snapshots kept for
+    bulk device mutations (Settings -> Advanced -> "Undo History Depth").
+    Falls back to UNDO_STACK_DEPTH and clamps to [UNDO_STACK_DEPTH_MIN,
+    UNDO_STACK_DEPTH_MAX]."""
+    from app.utilities.constants import (
+        UNDO_STACK_DEPTH,
+        UNDO_STACK_DEPTH_MAX,
+        UNDO_STACK_DEPTH_MIN,
+        SETTINGS_KEY_UNDO_STACK_DEPTH,
+    )
+
+    settings = get_settings()
+    try:
+        value = int(settings.value(SETTINGS_KEY_UNDO_STACK_DEPTH, UNDO_STACK_DEPTH))
+    except (TypeError, ValueError):
+        return UNDO_STACK_DEPTH
+    return max(UNDO_STACK_DEPTH_MIN, min(UNDO_STACK_DEPTH_MAX, value))
+
+
 def get_json_logging_enabled() -> bool:
     """Return whether the optional structured JSON log (events.jsonl) is
     enabled (Settings -> Diagnostics -> "Enable structured JSON logging").

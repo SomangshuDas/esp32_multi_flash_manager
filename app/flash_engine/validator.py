@@ -35,6 +35,11 @@ class ValidationIssue:
 @dataclass
 class ValidationReport:
     issues: list[ValidationIssue] = field(default_factory=list)
+    # True when this report was produced by validate_devices(..., dry_run=True)
+    # -- i.e. a "Validate Bench (Dry Run)" run rather than a real pre-upload
+    # check. The UI (ValidationReportDialog) uses this to skip the
+    # blocks-the-upload framing, since a dry run isn't gating anything.
+    dry_run: bool = False
 
     @property
     def has_errors(self) -> bool:
@@ -56,6 +61,7 @@ def validate_devices(
     connected_ports: set[str] | None = None,
     monitor_ports: set[str] | None = None,
     supported_chips: list[str] | None = None,
+    dry_run: bool = False,
 ) -> ValidationReport:
     """
     Validate a list of devices that are about to be flashed together.
@@ -79,9 +85,26 @@ def validate_devices(
     app.utilities.chip_detect (queried from the installed esptool at
     startup). If omitted, falls back to the hardcoded SUPPORTED_CHIPS
     constant so this function still works standalone/in tests.
+
+    `dry_run` runs every other check exactly as normal but skips the
+    live "is this port currently connected" check -- see ROADMAP.md's
+    "Dry-run / pre-flight simulation mode" entry: this lets an operator
+    validate a bench configuration (or review a project file someone else
+    built) before any hardware is plugged in at all, or even connected to
+    this machine. `connected_ports` is ignored when `dry_run` is True
+    (every configured port is treated as "would be connected"); every
+    other check (duplicate ports, chip/flash-mode/baud validity, firmware
+    file presence, address overlaps, security settings, ...) still runs
+    exactly as it would for a real upload.
     """
-    report = ValidationReport()
-    if connected_ports is None:
+    report = ValidationReport(dry_run=dry_run)
+    if dry_run:
+        # A dry run cares about configuration correctness, not today's
+        # live hardware state -- treat every device's configured port as
+        # present so the "port not currently connected" check never fires
+        # and doesn't drown out the checks that actually matter here.
+        connected_ports = {d.com_port for d in devices if d.com_port}
+    elif connected_ports is None:
         connected_ports = get_port_device_names()
     if monitor_ports is None:
         monitor_ports = set()

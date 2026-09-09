@@ -1,5 +1,5 @@
 # ESP32 Multi Flash Manager
-<!-- APP_VERSION: 0.14.0 -->
+<!-- APP_VERSION: 0.15.0 -->
 
 A production-grade, cross-platform desktop application for flashing
 firmware onto a bench of ESP32 devices in parallel — with a
@@ -228,6 +228,30 @@ implementation for correctness.
   firmware-count caps reject a corrupted or hostile project file quickly
   and predictably instead of risking a hang or excessive memory use —
   see `docs/THREAT_MODEL.md`.
+- **Dry-run / pre-flight validation** (`Tools → Validate Bench (Dry
+  Run)...`). Runs every pre-upload check against the whole current
+  device list without requiring any hardware to actually be plugged in —
+  useful for validating a bench configuration, or reviewing a project
+  file someone else built, before the ports it references even exist on
+  this machine.
+- **Diff / preview before Batch Edit and Assign Firmware Set apply.**
+  Both now show a "N device(s) will change" before/after table — only
+  the devices that would actually change, and what changes for each —
+  with a final Apply/Cancel step.
+- **Undo/redo for device mutations** (`Edit → Undo`/`Redo`,
+  Ctrl+Z/Ctrl+Shift+Z; `Edit` sits right after `File` in the menu bar).
+  Covers every action that changes a device: Add Device, remove,
+  duplicate, Batch Edit, Assign Firmware Set to Devices, CSV/firmware-
+  bundle import, and per-device edits made directly in the Device
+  Settings/Firmware/Security panels (rename, firmware additions,
+  security settings, ...). **Undo History Depth** (`Settings →
+  Advanced`) controls how many steps are kept.
+- **Zip + manifest bulk-flashing import** (`Devices → Import Firmware
+  Bundle (.zip)...`). Accepts a single `.zip` containing firmware
+  binaries plus a manifest CSV (device name/tags/chip type → firmware +
+  address mapping) and builds the whole device list, firmware already
+  assigned, in one import — see `docs/USER_MANUAL.md` for the manifest
+  format.
 
 ---
 

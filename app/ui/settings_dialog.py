@@ -81,10 +81,14 @@ from app.utilities.constants import (
     SETTINGS_KEY_SOUNDS_ENABLED,
     SETTINGS_KEY_TELEMETRY_ENABLED,
     SETTINGS_KEY_THEME,
+    SETTINGS_KEY_UNDO_STACK_DEPTH,
     SOUND_EVENT_LABELS,
     SOUND_EVENTS,
     THEME_OPTION_LABELS,
     THEME_OPTIONS,
+    UNDO_STACK_DEPTH,
+    UNDO_STACK_DEPTH_MAX,
+    UNDO_STACK_DEPTH_MIN,
 )
 from app.utilities.diagnostics import export_diagnostics_bundle
 from app.utilities.sound_player import play_preview_sound
@@ -257,9 +261,6 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(provisioning_box)
 
-        logs_button = QPushButton("Open Logs Folder")
-        logs_button.clicked.connect(self._open_logs_folder)
-        layout.addWidget(logs_button)
         layout.addStretch(1)
 
         return make_scrollable(content)
@@ -313,6 +314,19 @@ class SettingsDialog(QDialog):
         )
         form.addRow("Project Lock Stale After:", self.lock_stale_spin)
         self.lock_stale_spin.setAccessibleName("Project Lock Stale After")
+
+        self.undo_depth_spin = QSpinBox()
+        self.undo_depth_spin.setRange(UNDO_STACK_DEPTH_MIN, UNDO_STACK_DEPTH_MAX)
+        self.undo_depth_spin.setToolTip(
+            "How many Batch Edit / Assign Firmware Set / bulk remove / CSV-or-bundle import "
+            "operations Ctrl+Z can step back through. Each step keeps a full copy of the "
+            "device list, so a very high value trades memory for a longer undo history."
+        )
+        self.undo_depth_spin.setValue(
+            int(self.settings.value(SETTINGS_KEY_UNDO_STACK_DEPTH, UNDO_STACK_DEPTH))
+        )
+        form.addRow("Undo History Depth:", self.undo_depth_spin)
+        self.undo_depth_spin.setAccessibleName("Undo History Depth")
 
         layout.addLayout(form)
         layout.addStretch(1)
@@ -496,6 +510,7 @@ class SettingsDialog(QDialog):
         self.settings.setValue(SETTINGS_KEY_PORT_SCAN_INTERVAL_MS, self.port_scan_interval_spin.value())
         self.settings.setValue(SETTINGS_KEY_LIVE_LOG_MAX_LINES, self.live_log_max_lines_spin.value())
         self.settings.setValue(SETTINGS_KEY_PROJECT_LOCK_STALE_SECONDS, self.lock_stale_spin.value())
+        self.settings.setValue(SETTINGS_KEY_UNDO_STACK_DEPTH, self.undo_depth_spin.value())
 
         self.settings.setValue(SETTINGS_KEY_JSON_LOGGING_ENABLED, self.json_logging_check.isChecked())
         self.settings.setValue(SETTINGS_KEY_TELEMETRY_ENABLED, self.telemetry_check.isChecked())

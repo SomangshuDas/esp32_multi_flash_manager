@@ -56,3 +56,24 @@ Explicitly **not** goals:
 ## Reporting a vulnerability
 
 See `SECURITY.md` at the repository root for the disclosure process.
+
+## Zip + manifest firmware bundle import
+
+`Devices → Import Firmware Bundle (.zip)...`
+(`app/project_manager/zip_manifest_import.py`) accepts the same class of
+untrusted input as a `.emfm` project file (see "Why this file format is
+in scope" above) — a `.zip` can arrive from anywhere a project file can.
+The mitigations mirror the ones above, applied to an archive instead of
+a JSON document:
+
+| Threat | Mitigation |
+| --- | --- |
+| **Extremely large bundle** | `MAX_ZIP_BUNDLE_SIZE_BYTES` (200 MiB) is checked against the archive's total *uncompressed* size (summed from `ZipInfo.file_size` across every member) before any member is extracted. |
+| **"Zip slip" (a member path like `../../evil.bin` or an absolute path escaping the extraction folder)** | `_safe_extract_all()` resolves each member's target path and refuses (raises `ZipManifestImportError`, aborting the whole import) any entry whose resolved path would land outside the bundle's own extraction directory, rather than silently skipping just that one entry. |
+| **Pathologically large manifest** (thousands of rows) | `MAX_ZIP_MANIFEST_ROWS` (5000) stops parsing further rows once reached, reporting how many were ignored, instead of building an unbounded device list. |
+| **Corrupt / not-actually-a-zip file** | `zipfile.BadZipFile` is caught and re-raised as a friendly `ZipManifestImportError`. |
+| **Manifest referencing a firmware file not actually in the bundle** | Reported as a per-row error (`ZipManifestImportResult.errors`), not a fatal failure — the rest of the manifest still imports, same as a bad CSV device-import row. |
+
+Explicitly not a goal here either: validating the *firmware binaries*
+themselves — same reasoning as `.emfm` firmware references above, this
+is handled by the flashing pipeline/esptool, not by the import step.

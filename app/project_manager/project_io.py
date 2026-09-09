@@ -31,7 +31,12 @@ from app.utilities.constants import (
     MAX_RECENT_PROJECTS,
     PROJECT_LOCK_FILE_SUFFIX,
 )
-from app.utilities.helpers import clear_file_hidden, get_app_data_dir, mark_file_hidden
+from app.utilities.helpers import (
+    clear_file_hidden,
+    get_app_data_dir,
+    mark_file_hidden,
+    normalize_path_for_comparison,
+)
 
 logger = get_logger(__name__)
 
@@ -295,7 +300,15 @@ def load_project(file_path: str) -> ProjectModel:
 def add_recent_project(file_path: str) -> None:
     settings = get_settings()
     recents: list[str] = settings.value("recent_projects", [], type=list) or []
-    recents = [p for p in recents if p != file_path]
+    # Two spellings of the same path (different slash style, e.g.
+    # "C:/Users/sample.emfm" vs "C:\Users\sample.emfm") must dedupe to a
+    # single Recent Projects entry -- see
+    # helpers.normalize_path_for_comparison's docstring. The stored/
+    # displayed value stays whatever `file_path` was actually given as
+    # this time (most-recently-used spelling wins), only the comparison
+    # used for dedup is normalized.
+    normalized_new = normalize_path_for_comparison(file_path)
+    recents = [p for p in recents if normalize_path_for_comparison(p) != normalized_new]
     recents.insert(0, file_path)
     recents = recents[:MAX_RECENT_PROJECTS]
     settings.setValue("recent_projects", recents)

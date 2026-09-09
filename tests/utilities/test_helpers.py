@@ -293,3 +293,29 @@ class TestPropagateTraceHook:
         monkeypatch.setattr(sys, "settrace", lambda hook: calls.append(hook))
         helpers.propagate_trace_hook()
         assert calls == [sentinel]
+
+
+class TestNormalizePathForComparison:
+    """normalize_path_for_comparison() -- used to dedupe Recent Projects
+    (and any other "is this the same path as that one" check) across
+    forward-slash vs backslash spellings of the same location."""
+
+    def test_forward_and_backslash_windows_paths_are_equal(self):
+        forward = helpers.normalize_path_for_comparison("C:/Users/sample/project.emfm")
+        backward = helpers.normalize_path_for_comparison("C:\\Users\\sample\\project.emfm")
+        assert forward == backward
+
+    def test_mixed_separators_equal_either_pure_style(self):
+        mixed = helpers.normalize_path_for_comparison("C:/Users\\sample/project.emfm")
+        forward = helpers.normalize_path_for_comparison("C:/Users/sample/project.emfm")
+        assert mixed == forward
+
+    def test_genuinely_different_paths_are_not_equal(self):
+        a = helpers.normalize_path_for_comparison("C:/Users/sample/project_a.emfm")
+        b = helpers.normalize_path_for_comparison("C:/Users/sample/project_b.emfm")
+        assert a != b
+
+    def test_redundant_slashes_are_collapsed(self):
+        a = helpers.normalize_path_for_comparison("C:/Users//sample/project.emfm")
+        b = helpers.normalize_path_for_comparison("C:/Users/sample/project.emfm")
+        assert a == b

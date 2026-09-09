@@ -74,6 +74,43 @@ def normalize_hex_address(value: str) -> str:
     return "0x" + value[2:].lower().lstrip("x")
 
 
+def normalize_path_for_comparison(path: str) -> str:
+    """Return a form of `path` suitable for **equality comparison only**
+    -- never for display or for actually opening a file. Two spellings
+    of the same location (`C:/Users/sample.emfm` vs
+    `C:\\Users\\sample.emfm`, or a path with a redundant `./`/`../`
+    segment) must compare equal wherever the app treats "is this the
+    same project/file as that one" as a question, e.g. deduplicating the
+    Recent Projects list (see project_io.add_recent_project) --
+    otherwise the same file typed or dropped in with a different
+    separator style ends up as two separate entries.
+
+    `os.path.normpath()` collapses separator style and redundant
+    segments (mixed `/`/`\\` both become the OS's native separator, and
+    `normpath` also folds e.g. `..` where possible); `os.path.normcase()`
+    additionally lowercases and further normalizes separators on
+    case-insensitive filesystems (Windows) while being a no-op on
+    case-sensitive ones (Linux/macOS), matching each OS's own notion of
+    "same path". This does NOT resolve symlinks or relative-to-cwd
+    paths -- callers needing that should use `Path.resolve()` instead;
+    this function is specifically for the common "cosmetic slash-style
+    difference" case, which is what actually happens when the same path
+    is typed by hand vs produced by a file picker vs read back from a
+    project someone else saved.
+
+    Backslashes are always treated as path separators here, even when
+    this process is running on a POSIX system where `os.path` would
+    otherwise treat `\\` as a literal filename character. A project file
+    referencing a Windows-style path (the overwhelmingly common case for
+    an ESP32 flashing bench) needs the same C:/Users/... vs
+    C:\\Users\\... equivalence honored consistently regardless of which
+    platform this app happens to be running on right now, and a literal
+    backslash in a real filename is vanishingly rare by comparison.
+    """
+    unified_separators = path.replace("\\", "/")
+    return os.path.normcase(os.path.normpath(unified_separators))
+
+
 def file_exists(path: str | None) -> bool:
     """Safe existence check that tolerates None / empty strings."""
     if not path:

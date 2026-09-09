@@ -156,3 +156,39 @@ class TestRecentProjects:
             path = tmp_path / f"project_{i}.emfm"
             save_project(project, str(path))
         assert len(project_io.get_recent_projects()) <= MAX_RECENT_PROJECTS
+
+    def test_recent_projects_dedupe_across_slash_style(self, tmp_path):
+        """C:/Users/sample.emfm and C:\\Users\\sample.emfm (or, portably,
+        the same path saved once with forward slashes and once with
+        backslashes) must be treated as the same Recent Projects entry --
+        not two. Checked against the raw stored list (not
+        get_recent_projects(), which also filters out paths that don't
+        exist on disk with this OS's separator convention -- irrelevant
+        to the dedup logic itself, which this test targets directly)."""
+        from app.utilities.app_settings import get_settings
+
+        project_io.clear_recent_projects()
+        forward = "C:/Users/sample/project.emfm"
+        backward = "C:\\Users\\sample\\project.emfm"
+
+        project_io.add_recent_project(forward)
+        project_io.add_recent_project(backward)
+
+        stored = get_settings().value("recent_projects", [], type=list)
+        assert len(stored) == 1
+
+    def test_recent_projects_dedupe_keeps_most_recent_spelling_on_top(self, tmp_path):
+        from app.utilities.app_settings import get_settings
+
+        project_io.clear_recent_projects()
+        forward = "C:/Users/sample/project.emfm"
+        backward = "C:\\Users\\sample\\project.emfm"
+        other = "C:/Users/sample/other.emfm"
+
+        project_io.add_recent_project(forward)
+        project_io.add_recent_project(other)
+        project_io.add_recent_project(backward)  # re-"opening" the first path, spelled differently
+
+        stored = get_settings().value("recent_projects", [], type=list)
+        assert stored[0] == backward
+        assert len(stored) == 2

@@ -403,6 +403,18 @@ overwriting each device's tags, it *adds* the tag you type to whatever
 tags each targeted device already has (no duplicates). See §21 "Device
 Groups & Tags" below for what tags are for.
 
+After you confirm the Batch Edit dialog, a review step appears: a
+"N device(s) will change" table listing only the devices whose value
+would actually differ, showing the old value alongside the new one.
+Nothing is applied until you click **Apply** here — **Cancel** backs out
+with zero changes made, even though you already clicked OK on the first
+dialog. If nothing would actually change (e.g. every targeted device
+already has the value you picked), the review step is skipped entirely
+and you'll see a "No devices would change" message instead.
+
+Batch Edit (like Assign Firmware Set to Devices, §17) is undoable — see
+§10b below.
+
 ### Importing devices from CSV
 
 **Devices → Import Devices from CSV...** lets you populate the device
@@ -421,6 +433,45 @@ reported after the import finishes — the rest of the file still imports.
 If **Default Device Profile** is set in Settings → General, it's applied
 to every device imported this way, the same as it would be for a device
 added by hand.
+
+### 10a. Validating a bench before anything is connected
+
+**Tools → Validate Bench (Dry Run)...** runs every pre-upload check
+(port conflicts, chip/flash-mode/baud validity, missing firmware files,
+address overlaps, security settings, ...) against **every device in the
+current project**, without needing any of them to actually be plugged
+in. This is different from the validation that happens automatically
+when you click **Upload**: that one only checks the devices you're about
+to flash, and requires their ports to be live right now; a dry run
+checks the whole project regardless of what's connected to this machine
+at the moment.
+
+Use it to sanity-check a bench configuration before hardware arrives, or
+to review a project file someone else built and sent you. The report
+dialog looks like the normal pre-upload one, but always has a single
+**Close** button — a dry run isn't gating an upload, so there's nothing
+to "proceed" with.
+
+### 10b. Undo/redo
+
+**Edit → Undo** (`Ctrl+Z`) and **Edit → Redo** (`Ctrl+Shift+Z`) cover
+four operations: **Batch Edit**, removing multiple devices at once,
+**Assign Firmware Set to Devices** (§17), and importing devices from a
+CSV or firmware bundle (§17a). Each menu item's label names the specific
+operation it would undo/redo (e.g. "Undo Batch Edit: baud_rate"), so you
+can tell at a glance what Ctrl+Z is about to do before you press it.
+
+Undo/redo is **not** available for single-device edits made directly in
+the Device Settings / Firmware / Security panels, or for adding/
+duplicating one device at a time — only the four bulk operations above,
+which is where an accidental change is hardest to manually reverse.
+
+Undo history is kept as a bounded stack of full device-list snapshots
+(not a record of individual field changes), and its depth is adjustable
+in **Settings → Advanced → Undo History Depth** (default 25, range
+1–200) if you want a longer or shorter history. Loading a different
+project clears the undo history, since undoing across a project swap
+wouldn't make sense.
 
 ## 11. Firmware Profiles
 
@@ -447,6 +498,10 @@ added by hand.
 - **File → Save Project** (`Ctrl+S`) / **Save Project As...**
   (`Ctrl+Shift+S`).
 - **File → Recent Projects** lists your last 10 opened/saved projects.
+  The same location is only ever listed once, even if it's referenced
+  with different slash styles at different times (e.g.
+  `C:/Users/you/bench.emfm` vs `C:\Users\you\bench.emfm` are treated as
+  the same entry).
 
 ![Save Project As dialog](images/save-project-dialog.png)
 
@@ -615,6 +670,10 @@ built-in behavior, so leaving this tab untouched changes nothing.
 - **Project Lock Stale After** — how old a project's `.lock` sidecar file
   must be (with no matching running process on the same machine) before
   it's treated as abandoned and the project can be reopened.
+- **Undo History Depth** — how many Batch Edit / Assign Firmware Set /
+  bulk-remove / import steps `Edit → Undo` (§10b) can step back through
+  (default 25, range 1–200). Each step keeps a full copy of the device
+  list, so a very high value trades memory for a longer undo history.
 
 **Diagnostics:**
 - **Enable structured JSON logging** — writes an additional
@@ -672,6 +731,43 @@ board. Every other feature works exactly as it does when importing
 firmware per-device: auto-detect, the pre-upload warning page, live
 per-device progress, history, everything.
 
+Like Batch Edit (§10), confirming which devices to target opens a
+"N device(s) will change" review table before anything is actually
+applied — only devices whose firmware list would actually differ from
+what's already assigned are listed. Apply to proceed, Cancel to back
+out with nothing changed. This operation is undoable (§10b).
+
+### 17a. Zip + manifest bulk-flashing import
+
+**Devices → Import Firmware Bundle (.zip)...** accepts a single `.zip`
+file containing firmware binaries **plus** a manifest CSV, and builds a
+complete device list — firmware already assigned — in one import step.
+This is the "ship everything needed for this production run as one
+file" workflow: instead of separately sending a firmware folder and a
+device CSV and asking a remote operator to wire the two together by
+hand (§17, §10 "Importing devices from CSV"), you send one `.zip` and
+they use this menu item.
+
+The `.zip` must contain a file named `manifest.csv` at its root (or
+inside a single top-level folder) with a header row and one data row
+per **(device, firmware file)** pair — a device with three firmware
+files occupies three rows sharing the same `device_name`:
+
+| Column          | Required? | Meaning                                                                 |
+|-----------------|-----------|--------------------------------------------------------------------------|
+| `device_name`   | Yes       | Device display name.                                                     |
+| `firmware_file` | Yes       | Filename of a `.bin` anywhere in the `.zip` (subfolders are searched).   |
+| `address`       | No        | Flash address, e.g. `0x10000`. Falls back to the same well-known address used by auto-detect (§4) for a recognized filename like `firmware.bin` or `bootloader.bin`, or `0x0` for an unrecognized one. |
+| `tags`          | No        | Semicolon-separated, e.g. `Line A;RFID Batch` — only needs to be set on one row per device. |
+| `chip_type`     | No        | e.g. `esp32s3` — only needs to be set on one row per device.             |
+| `enabled`       | No        | `true`/`false`, defaults to `true`.                                       |
+
+A row with a missing `device_name` or `firmware_file`, or one whose
+`firmware_file` isn't actually anywhere in the `.zip`, is skipped and
+reported after the import finishes — same "skip the bad row, keep the
+rest of the file" behavior as CSV device import. This operation is
+undoable (§10b).
+
 ## 18. Locking the interface
 
 ![Lock Interface submenu](images/lock-interface-submenu.png)
@@ -725,6 +821,10 @@ key sequence of your choice; the app warns you (and blocks Save) if two
 actions end up sharing the same shortcut. **Reset to Defaults**
 restores everything shown here. Any action not listed here (e.g. Cancel
 Selected, Retry Failed) has no default shortcut and isn't customisable.
+
+Two additional shortcuts have a fixed default and are **not** listed in
+the Keyboard Shortcuts dialog: `Ctrl+Z` (**Edit → Undo**) and
+`Ctrl+Shift+Z` (**Edit → Redo**) — see §10b.
 
 | Default Shortcut | Action |
 |---|---|

@@ -22,6 +22,7 @@ wiring + user interaction.
 
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QUrl, QTimer
@@ -54,6 +55,7 @@ from app.logging_setup.logger import get_logger
 from app.project_manager.project_io import clear_recent_projects, get_recent_projects
 from app.ui.batch_edit_dialog import BatchEditDialog
 from app.ui.batch_provision_dialog import BatchProvisionDialog
+from app.ui.change_preview_dialog import ChangePreviewDialog
 from app.ui.dashboard import DashboardWidget
 from app.ui.device_panel import DevicePanel
 from app.ui.device_settings_widget import DeviceSettingsWidget
@@ -89,6 +91,7 @@ from app.utilities.constants import (
     PROJECT_FILE_EXTENSION_LEGACY,
     PROJECT_FILE_FILTER,
     PROJECT_FILE_FILTER_OPEN,
+    REDO_SHORTCUT,
     SETTINGS_KEY_AUTOSAVE_INTERVAL,
     SETTINGS_KEY_INTERFACE_LOCK_KEY_HASH,
     SETTINGS_KEY_THEME,
@@ -98,6 +101,8 @@ from app.utilities.constants import (
     SOUND_EVENT_FLASH_FAILURE,
     SOUND_EVENT_FLASH_SUCCESS,
     STATUS_COMPLETED,
+    UNDO_SHORTCUT,
+    ZIP_MANIFEST_FILE_FILTER,
     STATUS_FAILED,
     TAG_FILTER_ALL,
     THEME_DARK,
@@ -152,6 +157,14 @@ class MainWindow(QMainWindow):
         # Menu actions that Settings Lock disables on top of
         # the widget-level locks (see _set_factory_mode_locked).
         self._factory_lock_actions: list[QAction] = []
+        # Baseline for undo-tracking single-device edits made directly by
+        # the Device Settings / Firmware / Security panels -- see
+        # _capture_pre_edit_snapshot / _push_device_edit_undo and
+        # DeviceController.push_device_edit_undo's docstring for why this
+        # can't just be wrapped the way Batch Edit/Assign Firmware Set
+        # are wrapped.
+        self._pre_edit_snapshot_device_id: str | None = None
+        self._pre_edit_snapshot: "DeviceConfig | None" = None
 
         self._build_ui()
         self._build_menus_and_toolbar()
@@ -254,6 +267,18 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         self._add_action(file_menu, "E&xit", "", self.close, action_id="exit_app")
 
+        # ---- Edit menu ----
+        # Undo/Redo coverage for all device-mutating operations -- see
+        # app/controllers/undo_stack.py. Placed right after File (rather
+        # than after Devices) to match the conventional File/Edit/...
+        # desktop menu bar ordering every user already expects.
+        edit_menu = menu_bar.addMenu("&Edit")
+        self.undo_action = self._add_action(edit_menu, "Undo", UNDO_SHORTCUT, self._on_undo)
+        self.redo_action = self._add_action(edit_menu, "Redo", REDO_SHORTCUT, self._on_redo)
+        self.undo_action.setEnabled(False)
+        self.redo_action.setEnabled(False)
+        self._factory_lock_actions.extend([self.undo_action, self.redo_action])
+
         # ---- Devices menu ----
         devices_menu = menu_bar.addMenu("&Devices")
         self._add_action(
@@ -264,6 +289,9 @@ class MainWindow(QMainWindow):
         import_csv_action = self._add_action(
             devices_menu, "Import Devices from CSV...", "", self._on_import_devices_from_csv,
         )
+        import_zip_action = self._add_action(
+            devices_menu, "Import Firmware Bundle (.zip)...", "", self._on_import_firmware_bundle,
+        )
         devices_menu.addSeparator()
         assign_firmware_action = self._add_action(
             devices_menu, "Assign Firmware Set to Devices...", "",
@@ -273,7 +301,7 @@ class MainWindow(QMainWindow):
         # devices, so Settings Lock disables them alongside
         # the Firmware/Device Settings panels themselves.
         self._factory_lock_actions.extend(
-            [batch_edit_action, profiles_action, assign_firmware_action, import_csv_action]
+            [batch_edit_action, profiles_action, assign_firmware_action, import_csv_action, import_zip_action]
         )
 
         # ---- Flash menu ----
@@ -301,6 +329,9 @@ class MainWindow(QMainWindow):
         self._add_action(tools_menu, "Keyboard Shortcuts...", "", self._on_open_shortcuts_dialog)
         self._add_action(tools_menu, "Check for Updates...", "", self._on_check_updates)
         tools_menu.addSeparator()
+        self._add_action(
+            tools_menu, "Validate Bench (Dry Run)...", "", self._on_validate_bench_dry_run,
+        )
         self._add_action(
             tools_menu, "Open Serial Monitor...", "", self._on_open_serial_monitor_dialog,
             action_id="open_serial_monitor",
@@ -396,10 +427,20 @@ class MainWindow(QMainWindow):
         self.device_controller.device_removed.connect(self.device_panel.remove_device_row)
         self.device_controller.device_updated.connect(self._on_device_updated)
         self.device_controller.devices_reset.connect(self._on_devices_reset)
+        self.device_controller.undo_stack_changed.connect(self._refresh_undo_redo_actions)
 
         self.firmware_panel.firmware_changed.connect(self._on_device_config_changed)
+        self.firmware_panel.firmware_changed.connect(
+            lambda device_id: self._push_device_edit_undo(device_id, "Edit firmware")
+        )
         self.settings_widget.settings_changed.connect(self._on_device_config_changed)
+        self.settings_widget.settings_changed.connect(
+            lambda device_id: self._push_device_edit_undo(device_id, "Edit device settings")
+        )
         self.security_widget.settings_changed.connect(self._on_device_config_changed)
+        self.security_widget.settings_changed.connect(
+            lambda device_id: self._push_device_edit_undo(device_id, "Edit device security")
+        )
         self.security_widget.provision_requested.connect(self._on_provision_requested)
         self.device_panel.read_device_requested.connect(self._on_read_device_requested)
 
@@ -464,10 +505,91 @@ class MainWindow(QMainWindow):
         confirm = QMessageBox.question(self, "Remove Devices", f"Remove {len(device_ids)} device(s)?")
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        for device_id in device_ids:
-            self.device_controller.remove_device(device_id)
+        self.device_controller.remove_devices(device_ids)
         self.project_controller.mark_dirty()
         self._refresh_dashboard()
+
+    def _refresh_undo_redo_actions(self) -> None:
+        """Keep the Edit -> Undo/Redo menu items' enabled state and label
+        in sync with DeviceController.undo_stack (called after every push/
+        undo/redo -- see undo_stack_changed)."""
+        can_undo = self.device_controller.can_undo()
+        can_redo = self.device_controller.can_redo()
+        self.undo_action.setEnabled(can_undo)
+        self.redo_action.setEnabled(can_redo)
+        undo_desc = self.device_controller.undo_description()
+        redo_desc = self.device_controller.redo_description()
+        self.undo_action.setText(f"Undo {undo_desc}" if undo_desc else "Undo")
+        self.redo_action.setText(f"Redo {redo_desc}" if redo_desc else "Redo")
+
+    def _on_undo(self) -> None:
+        description = self.device_controller.undo_description()
+        if self.device_controller.undo():
+            self.project_controller.mark_dirty()
+            self._refresh_dashboard()
+            self._refresh_tag_filter_options()
+            if description:
+                self.statusBar().showMessage(f"Undid: {description}", 3000)
+
+    def _on_redo(self) -> None:
+        description = self.device_controller.redo_description()
+        if self.device_controller.redo():
+            self.project_controller.mark_dirty()
+            self._refresh_dashboard()
+            self._refresh_tag_filter_options()
+            if description:
+                self.statusBar().showMessage(f"Redid: {description}", 3000)
+
+    # ------------------------------------------------------------------
+    # Bench validation (dry run) -- Tools -> Validate Bench (Dry Run)...
+    # ------------------------------------------------------------------
+    def _on_validate_bench_dry_run(self) -> None:
+        """Run the same pre-upload checks Upload would run, against the
+        WHOLE current device list, without requiring any device to
+        actually be connected -- see ROADMAP.md's "Dry-run / pre-flight
+        simulation mode" entry. Useful for validating a bench
+        configuration (or reviewing a project file someone else built)
+        before hardware is even on the desk."""
+        devices = self.device_controller.devices()
+        if not devices:
+            QMessageBox.information(
+                self, "Validate Bench (Dry Run)", "No devices in the current project to validate.",
+            )
+            return
+        report = validate_devices(
+            devices, monitor_ports=self._monitor_ports(), supported_chips=self.supported_chips, dry_run=True,
+        )
+        ValidationReportDialog(report, self).exec()
+
+    # ------------------------------------------------------------------
+    # Zip + manifest bulk-flashing import -- Devices -> Import Firmware
+    # Bundle (.zip)...
+    # ------------------------------------------------------------------
+    def _on_import_firmware_bundle(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Import Firmware Bundle", "", ZIP_MANIFEST_FILE_FILTER)
+        if not path:
+            return
+        from app.project_manager.zip_manifest_import import ZipManifestImportError
+
+        try:
+            result = self.device_controller.import_from_zip_bundle(path)
+        except ZipManifestImportError as exc:
+            QMessageBox.warning(self, "Import Firmware Bundle", str(exc))
+            return
+
+        self.device_panel.rebuild(self._get_sorted_devices())
+        self.project_controller.mark_dirty()
+        self._refresh_dashboard()
+        self._refresh_tag_filter_options()
+
+        summary = f"Imported {result.imported_count} device(s) from {Path(path).name}."
+        if result.errors:
+            shown_errors = result.errors[:10]
+            more = f"\n... and {len(result.errors) - 10} more" if len(result.errors) > 10 else ""
+            summary += "\n\nSkipped row(s):\n" + "\n".join(shown_errors) + more
+            QMessageBox.warning(self, "Import Firmware Bundle", summary)
+        else:
+            QMessageBox.information(self, "Import Firmware Bundle", summary)
 
     def _on_duplicate_devices(self, device_ids: list[str]) -> None:
         for device_id in device_ids:
@@ -482,6 +604,37 @@ class MainWindow(QMainWindow):
         locked = device is not None and self.flash_controller.is_busy(device.id)
         self.settings_widget.set_device(device, locked=locked)
         self.security_widget.set_device(device, locked=locked)
+        self._capture_pre_edit_snapshot(device_id)
+
+    def _capture_pre_edit_snapshot(self, device_id: str | None) -> None:
+        """Record a deep copy of `device_id`'s current state as the
+        baseline the next single-device edit (Device Settings / Firmware
+        / Security panel) will be diffed against for undo purposes -- see
+        DeviceController.push_device_edit_undo. Called whenever the
+        selected device changes (a fresh baseline for whatever's about to
+        be edited) and again after each edit is pushed to the undo stack
+        (so the *next* edit diffs against post-edit state, not against
+        whatever was selected first -- otherwise every edit since
+        selection would collapse into one undo step instead of one each)."""
+        if device_id is None:
+            self._pre_edit_snapshot_device_id = None
+            self._pre_edit_snapshot = None
+            return
+        device = self.device_controller.get_device(device_id)
+        self._pre_edit_snapshot_device_id = device_id
+        self._pre_edit_snapshot = copy.deepcopy(device) if device is not None else None
+
+    def _push_device_edit_undo(self, device_id: str, description: str) -> None:
+        """Connected alongside _on_device_config_changed to each of the
+        three "a field edit was just committed" signals (Device
+        Settings/Firmware/Security panels). Diffs the device's current
+        (already-mutated) state against the baseline captured by
+        _capture_pre_edit_snapshot, pushes an undo step if anything
+        actually changed, then re-baselines for the next edit."""
+        if self._pre_edit_snapshot_device_id != device_id or self._pre_edit_snapshot is None:
+            return
+        self.device_controller.push_device_edit_undo(device_id, self._pre_edit_snapshot, description)
+        self._capture_pre_edit_snapshot(device_id)
 
     def _on_device_config_changed(self, device_id: str) -> None:
         device = self.device_controller.get_device(device_id)
@@ -640,6 +793,18 @@ class MainWindow(QMainWindow):
                 if not value:
                     QMessageBox.information(self, "Batch Edit", "Enter a tag to add first.")
                     return
+                changes = self.device_controller.preview_tag_addition(target_ids, value)
+            else:
+                changes = self.device_controller.preview_field_change(target_ids, field, value)
+
+            if not changes:
+                QMessageBox.information(self, "Batch Edit", "No devices would change.")
+                return
+            preview = ChangePreviewDialog("Batch Edit - Review Changes", changes, self)
+            if preview.exec() != preview.DialogCode.Accepted:
+                return
+
+            if field == "tags":
                 self.device_controller.add_tag_to_devices(target_ids, value)
             else:
                 self.device_controller.apply_to_selected(target_ids, field, value)
@@ -686,6 +851,14 @@ class MainWindow(QMainWindow):
                 "Skipped currently-uploading device(s): " + ", ".join(busy_names),
             )
         if not target_ids:
+            return
+
+        changes = self.device_controller.preview_firmware_assignment(target_ids, entries)
+        if not changes:
+            QMessageBox.information(self, "Assign Firmware Set", "No devices would change.")
+            return
+        preview = ChangePreviewDialog("Assign Firmware Set - Review Changes", changes, self)
+        if preview.exec() != preview.DialogCode.Accepted:
             return
 
         updated = self.device_controller.apply_firmware_to_devices(target_ids, entries)
@@ -1430,6 +1603,7 @@ class MainWindow(QMainWindow):
             dialog.save()
             self._apply_theme(dialog.selected_theme())
             self._apply_autosave_interval()
+            self.device_controller.refresh_undo_stack_depth()
 
     # ------------------------------------------------------------------
     # Auto-Save

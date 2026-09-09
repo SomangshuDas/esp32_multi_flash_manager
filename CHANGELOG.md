@@ -1,4 +1,4 @@
-<!-- APP_VERSION: 0.14.0 -->
+<!-- APP_VERSION: 0.15.0 -->
 # Changelog
 
 All notable changes to ESP32 Multi Flash Manager are documented here,
@@ -12,6 +12,82 @@ README.md) is machine-checked: `.github/workflows/version_check.yml`
 fails a tagged-release build if either marker's version doesn't match
 `APP_VERSION` in `app/utilities/constants.py`. Bump both when you bump
 that constant.
+
+## [0.15.0] - 2026-09-09
+
+### Added
+- **Dry-run / pre-flight simulation mode**: `Tools → Validate Bench (Dry
+  Run)...` runs the exact same checks Upload would run against every
+  device in the current project, without requiring any hardware to
+  actually be plugged in. Useful for validating a bench configuration --
+  or reviewing a project file someone else built -- before the ports it
+  references even exist on this machine. `validate_devices()` gained a
+  `dry_run` parameter that skips only the live "is this port currently
+  connected" check; every other check (duplicate ports, chip/flash-mode/
+  baud validity, firmware file presence, security settings, ...) still
+  runs exactly as it would for a real upload.
+- **Diff / preview step for Batch Edit and Assign Firmware Set**: both
+  now show a "N device(s) will change" before/after table (new
+  `ChangePreviewDialog`) after their own dialog is confirmed, listing
+  only the devices that would actually change and what changes for each
+  -- Apply to proceed, Cancel to make no changes. New
+  `DeviceController.preview_field_change()` / `preview_tag_addition()` /
+  `preview_firmware_assignment()` compute these diffs read-only.
+- **Undo/redo, covering every device-mutating action**: `Edit → Undo`
+  (Ctrl+Z) / `Edit → Redo` (Ctrl+Shift+Z) -- `Edit` now sits right after
+  `File` in the menu bar, matching the conventional File/Edit/...
+  ordering. Every action that changes a device is now one undo step:
+  Add Device, single or bulk device removal, Duplicate Device, Batch
+  Edit, Assign Firmware Set to Devices, CSV/firmware-bundle import, *and*
+  per-device edits made directly in the Device Settings, Firmware, and
+  Security panels (rename, port/chip/baud/flash-setting changes, adding/
+  removing/reordering firmware entries, security/provisioning settings)
+  -- each field-group commit (e.g. one `editingFinished`) is its own undo
+  step. Implemented as a bounded stack of whole-device-list snapshots
+  (new `app/controllers/undo_stack.py`) rather than field-level diffing,
+  deliberately trading a little memory for a much simpler, easier-to-
+  verify implementation; per-device panel edits (which mutate their
+  `DeviceConfig` object in place rather than going through a
+  `DeviceController` method) are captured via a before/after snapshot
+  taken around each panel commit (`DeviceController.push_device_edit_undo`,
+  `MainWindow._capture_pre_edit_snapshot`/`_push_device_edit_undo`). New
+  **Undo History Depth** setting (Settings → Advanced, default 25,
+  adjustable 1–200) controls how many steps are kept.
+- **Zip + manifest bulk-flashing import**: `Devices → Import Firmware
+  Bundle (.zip)...` accepts a single `.zip` containing firmware binaries
+  plus a `manifest.csv` (device name/tags/chip type → firmware+address
+  mapping) and materializes it into a full device list with firmware
+  already assigned, in one step -- see `docs/USER_MANUAL.md` for the
+  manifest format. Bounds both the archive's uncompressed size and the
+  manifest's row count before extracting/parsing anything, and refuses
+  any archive entry whose path would resolve outside the extraction
+  folder ("zip slip").
+
+### Changed
+- `DeviceController.remove_device()` gained a bulk sibling,
+  `remove_devices()`, used by the Devices panel's multi-select Remove so
+  that removing several devices at once is a single undo step instead of
+  one per device.
+- **Recent Projects now dedupes across path-separator style.** Two
+  spellings of the same location (`C:/Users/sample.emfm` vs
+  `C:\Users\sample.emfm`) previously showed up as two separate Recent
+  Projects entries; new `helpers.normalize_path_for_comparison()` is now
+  used wherever the app needs to ask "is this the same path as that
+  one" (currently: `project_io.add_recent_project`'s dedup check --
+  audited for other raw path-equality comparisons elsewhere in the app;
+  this was the only one).
+- **Settings → General** no longer has its own "Open Logs Folder"
+  button -- it duplicated the one already on the **Diagnostics** tab.
+
+### Internal
+- New `UndoStack`/`UndoEntry` (`app/controllers/undo_stack.py`) and
+  `zip_manifest_import` (`app/project_manager/zip_manifest_import.py`)
+  modules, each covered by dedicated unit tests; `DeviceController`'s
+  bulk-mutation and single-device methods, the new
+  `push_device_edit_undo()`, `MainWindow`'s Batch Edit / Assign Firmware
+  Set handlers, and the per-device panel undo-tracking wiring all gained
+  test coverage.
+- APP_VERSION bumped to 0.15.0 in app/utilities/constants.py.
 
 ## [0.14.0] - 2026-09-09
 

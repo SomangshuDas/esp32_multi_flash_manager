@@ -76,12 +76,15 @@ This document is for engineers extending or maintaining the codebase.
 | `app/models/project_model.py` | `ProjectModel`: the full save-file contents |
 | `app/models/history_model.py` | `HistoryEntry` (now with `id`/`device_id`/`mac_address`/`qc_status`) + CSV export helper |
 | `app/controllers/device_controller.py` | CRUD + search + batch-edit over the device list |
+| `app/controllers/undo_stack.py` | `UndoStack`/`UndoEntry`: bounded, whole-device-list-snapshot undo/redo backing `DeviceController`'s four bulk mutation operations |
 | `app/controllers/flash_controller.py` | Spins up/tracks `FlashWorker`s, aggregates batch completion, emits history entries |
 | `app/controllers/provision_controller.py` | Batch counterpart of `flash_controller.py`: spins up/tracks `ProvisionWorker`s across multiple devices at once, same parallel-cap/queue design |
 | `app/controllers/project_controller.py` | New/open/save/save-as, missing-firmware detection on load |
 | `app/flash_engine/esptool_wrapper.py` | `FlashCommandBuilder` (DeviceConfig → argv) + `FlashProcess` (subprocess wrapper) + `parse_progress_line` |
 | `app/flash_engine/validator.py` | Pure, offline pre-upload validation (duplicate/invalid/overlapping addresses, port availability, etc.) → `ValidationReport` |
 | `app/project_manager/project_io.py` | `.emfm`/`.efmproj` project I/O: atomic (temp-file + `os.replace`) save/load, `schema_version` migration on load and re-stamping on every save, advisory cross-process/cross-machine locking (hidden sidecar), firmware-path relativization, crash-recovery autosave slot, and the recent-projects list (via `app_settings.py`) |
+| `app/project_manager/csv_import.py` | CSV → `list[DeviceConfig]` device import, skip-bad-row-not-whole-file error model |
+| `app/project_manager/zip_manifest_import.py` | `.zip` (firmware binaries + manifest CSV) → `list[DeviceConfig]` with firmware pre-assigned; zip-slip-safe extraction, size/row caps |
 | `app/device_manager/port_scanner.py` | pyserial wrapper: `list_available_ports()` |
 | `app/firmware_manager/auto_detect.py` | Folder → `list[FirmwareEntry]` with known-address assignment |
 | `app/firmware_manager/profiles.py` | Named, reusable firmware+settings bundles, stored as JSON in app-data |
@@ -709,3 +712,178 @@ the esptool ones exactly. Packaging (`packaging/*/`,
 `--collect-all espsecure --collect-all espefuse` alongside the existing
 `--collect-all esptool` — collecting `esptool` alone does **not** bundle
 these, since they're separate top-level packages, not submodules.
+
+## 16. Dry-run validation, Batch Edit/Assign Firmware Set diff preview, undo/redo, and zip+manifest import
+
+**Dry-run validation** (`Tools → Validate Bench (Dry Run)...`,
+`MainWindow._on_validate_bench_dry_run`): `validate_devices()` gained a
+`dry_run: bool = False` parameter. When `True`, it treats every
+device's configured `com_port` as present (`connected_ports = {d.com_port
+for d in devices if d.com_port}`) instead of scanning/consulting the live
+port list, so the "port not currently connected" check never fires.
+Every other check in `_validate_single_device`/`_validate_single_device_security`
+runs unchanged. `ValidationReport` carries the `dry_run` flag through to
+`ValidationReportDialog`, which uses it purely for framing (title, and a
+single Close button instead of the normal Ok-blocks/Ok-Cancel-proceeds
+logic) — a dry run isn't gating an Upload click, so there's nothing to
+block or proceed with.
+
+**Diff/preview** (`app/ui/change_preview_dialog.py`,
+`DeviceController.preview_field_change`/`preview_tag_addition`/
+`preview_firmware_assignment`): the preview methods are pure/read-only —
+they never mutate `project.devices`, only compare each candidate
+device's current value against the value about to be applied and return
+`(device_id, device_name, old, new)` tuples for devices that would
+actually change (busy devices, per `_is_device_busy`, are excluded the
+same way the corresponding `apply_*` method excludes them). `MainWindow`
+calls the relevant preview method after its own dialog (`BatchEditDialog`/
+firmware-folder picker) is confirmed, and only proceeds to the real
+`apply_*` call if `ChangePreviewDialog.exec()` returns `Accepted`; an
+empty changes list skips the dialog entirely with a "No devices would
+change" message instead.
+
+**Undo/redo** (`app/controllers/undo_stack.py`,
+`DeviceController.undo`/`redo`/`can_undo`/`can_redo`): `UndoStack` is a
+plain Python class (no Qt dependency) holding two lists of `UndoEntry`
+(`description`, `before`, `after`), where `before`/`after` are **full**
+`project.devices` deep copies at the moment an operation was pushed —
+not a diff/patch of individual fields. This was a deliberate
+simplicity-over-memory tradeoff (see `undo_stack.py`'s module docstring
+and `ROADMAP.md`'s original design sketch): `DeviceConfig` (and
+`FirmwareEntry`/`SecurityConfig`) are plain, cheap-to-`copy.deepcopy()`
+dataclasses, so snapshotting the whole list is far simpler to get right
+than a generic diff/patch engine, at an acceptable memory cost given
+`MAX_DEVICES_PER_PROJECT`. Coverage is comprehensive — every action that
+mutates a device is undoable, not only the four bulk operations:
+`DeviceController.add_device`, `remove_device`, `remove_devices`,
+`duplicate_device`, `apply_to_all`, `apply_to_selected`,
+`add_tag_to_devices`, `apply_firmware_to_devices`, `import_from_csv`,
+and `import_from_zip_bundle` all wrap themselves with a
+`before = self._snapshot(); ... after = self._snapshot();
+self.undo_stack.push(description, before, after)` pattern via the shared
+`_push_undo()` helper — only when at least one device was actually
+touched, so a no-op call (e.g. all-unknown ids) never pollutes the
+history. `undo()`/`redo()` swap `self.project.devices` for the returned
+snapshot wholesale and emit `devices_reset` (the same signal a project
+load uses) plus `undo_stack_changed` (which `MainWindow._refresh_undo_redo_actions`
+listens to, updating `Edit → Undo`/`Redo`'s enabled state and label, and
+placed right after `File` in the menu bar order). Depth is configurable
+via **Settings → Advanced → Undo History Depth**
+(`get_undo_stack_depth()`/`SETTINGS_KEY_UNDO_STACK_DEPTH`,
+`DeviceController.refresh_undo_stack_depth()` re-reads it live after
+Settings closes). `set_project()` clears the stack — undo history from a
+different project's device list makes no sense once it's gone.
+
+**Per-device panel edits** (Device Settings/Firmware/Security tabs) are
+a special case: those panels (`device_settings_widget.py`,
+`firmware_panel.py`, `security_settings_widget.py`) hold a live
+reference to the selected `DeviceConfig` and mutate its fields *directly
+in place* on each commit (`editingFinished`, a combo/checkbox change,
+Add/Remove Firmware, ...) rather than calling a `DeviceController`
+method — there's no single call site to wrap the way
+`apply_to_selected()` is wrapped. Instead:
+
+1. `MainWindow._capture_pre_edit_snapshot(device_id)` records a
+   `copy.deepcopy()` of the device's current state as `self._pre_edit_snapshot`,
+   called from `_on_device_selected` whenever the selected device changes
+   (the only place these panels ever get a new device loaded into them —
+   `set_device()` is only ever called from there).
+2. Each panel's "a field edit was just committed" signal
+   (`firmware_panel.firmware_changed`, `settings_widget.settings_changed`,
+   `security_widget.settings_changed`) is wired to *both* the pre-existing
+   `_on_device_config_changed` (UI refresh) *and* a new
+   `MainWindow._push_device_edit_undo(device_id, description)`.
+3. `_push_device_edit_undo` calls
+   `DeviceController.push_device_edit_undo(device_id, self._pre_edit_snapshot, description)`,
+   which compares the device's current (already-mutated) `to_dict()`
+   against the snapshot's `to_dict()` — pushing an undo entry (with the
+   snapshot substituted back in for that one device, everything else
+   left at current state) only if something actually changed, so an
+   `editingFinished` that fires without the value having changed doesn't
+   create a no-op undo step. Either way, `_push_device_edit_undo` then
+   re-baselines (`_capture_pre_edit_snapshot` again) so the *next* commit
+   diffs against post-edit state — each field-group commit is its own
+   undo step, not everything since selection collapsed into one.
+
+Because `_on_devices_reset` (which `undo()`/`redo()`/project load all
+trigger) fully rebuilds the Devices table (`device_panel.rebuild()`
+clears and re-populates rows), the previous selection is lost and
+`_on_device_selected(None)` fires — clearing the pre-edit baseline along
+with it, so there's no risk of a panel continuing to edit a `DeviceConfig`
+object that's since become a detached, orphaned deep copy after an undo.
+
+Note the bulk `DeviceController.remove_devices()` (plural) added
+alongside the pre-existing single-device `remove_device()`:
+
+`MainWindow._on_remove_devices` (the Devices panel's multi-select
+Remove) now calls the plural form so a multi-device removal is one undo
+step, not one per device.
+
+**Zip + manifest import** (`app/project_manager/zip_manifest_import.py`,
+`DeviceController.import_from_zip_bundle`,
+`MainWindow._on_import_firmware_bundle`): conceptually
+`csv_import.py` (device rows, same skip-bad-row error model) plus
+`auto_detect.py`'s folder-to-firmware-list resolution, combined into one
+`.zip`. `import_devices_from_zip_bundle()`:
+
+1. Rejects the archive outright (raises `ZipManifestImportError`, an
+   archive-level failure distinct from a per-row `ZipManifestImportResult.errors`
+   entry) if it isn't a valid zip, its total uncompressed size exceeds
+   `MAX_ZIP_BUNDLE_SIZE_BYTES`, or no `manifest.csv` is found at its root
+   or inside a single top-level folder.
+2. Extracts every member into a fresh folder under
+   `get_app_data_dir() / "imported_firmware_bundles" / <bundle-name>_<uuid8>`
+   via `_safe_extract_all()`, which resolves each member's target path
+   and refuses ("zip slip" protection) any entry whose resolved path
+   would land outside that extraction folder.
+3. Indexes every `.bin` found anywhere in the extracted tree by filename
+   (`_index_bin_files`), then parses the manifest row-by-row
+   (`_parse_manifest`/`_apply_row`), building one `DeviceConfig` per
+   distinct `device_name` and appending a `FirmwareEntry` per row,
+   resolving `address` from the manifest, falling back to
+   `KNOWN_FIRMWARE_ADDRESSES` for a recognized filename, or `"0x0"`
+   otherwise. A row-count cap (`MAX_ZIP_MANIFEST_ROWS`) stops parsing
+   (with a trailing error message) rather than accepting an unbounded
+   manifest.
+4. Per-row problems (missing `device_name`/`firmware_file`, a
+   `firmware_file` that isn't anywhere in the bundle) are collected into
+   `result.errors` and reported after import, exactly like
+   `csv_import.py` — one bad row never blocks the rest of a large
+   bundle.
+
+`DeviceController.import_from_zip_bundle()` mirrors `import_from_csv()`'s
+undo-stack integration, but does **not** apply `_apply_default_profile()`
+to the resulting devices (unlike CSV import) — a zip bundle's devices
+already have their firmware/chip type explicitly set by the manifest, so
+silently overwriting that with a configured default profile would be
+surprising.
+
+## 17. Menu ordering, duplicate Settings control, and Recent Projects path dedup
+
+**Menu bar order:** `Edit` (Undo/Redo) is built immediately after `File`
+in `MainWindow._build_menus_and_toolbar` — `File`, `Edit`, `Devices`,
+`Fl&ash`, `View`, `Tools`, `Help` — matching the conventional desktop
+File/Edit/... ordering rather than being tucked further along the bar.
+This is purely about `menu_bar.addMenu()` call order; nothing about
+`Edit`'s contents changed from §16 above.
+
+**Settings → General's "Open Logs Folder" button was removed** —
+`_build_general_tab()` in `settings_dialog.py` had its own copy of the
+same button already present on the **Diagnostics** tab
+(`_build_diagnostics_tab()`), both wired to the same
+`_open_logs_folder()` handler. Only the General-tab copy was removed;
+Diagnostics keeps its own.
+
+**Recent Projects path-separator dedup:** `helpers.normalize_path_for_comparison()`
+is a new small utility — `path.replace("\\", "/")` followed by
+`os.path.normcase(os.path.normpath(...))` — used by
+`project_io.add_recent_project()` to dedupe entries that differ only by
+slash style (`C:/Users/x.emfm` vs `C:\Users\x.emfm`). The backslash-to-
+forward-slash replacement happens unconditionally, regardless of the
+host OS `os.path` would otherwise assume, specifically so this behaves
+correctly for Windows-style paths even when the app (or its test suite)
+is running on Linux/macOS — see the function's docstring for the full
+reasoning. This was the only raw path-equality comparison found in the
+codebase after an audit for the same class of bug elsewhere (project
+lock-file paths, firmware `file_path` dedup, etc. either don't do
+raw-string equality at all, or aren't user-facing dedup in the same way).

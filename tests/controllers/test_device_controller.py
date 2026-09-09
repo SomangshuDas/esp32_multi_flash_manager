@@ -9,6 +9,8 @@ live updates.
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from app.controllers.device_controller import DeviceController
@@ -353,3 +355,359 @@ class TestSetProject:
         with qtbot.waitSignal(controller.devices_reset, timeout=1000):
             controller.set_project(new_project)
         assert [d.name for d in controller.devices()] == ["New Device"]
+
+
+class TestUndoRedoIntegration:
+    """DeviceController wires the four bulk mutation operations (Batch
+    Edit, bulk removal, Assign Firmware Set, CSV import) through
+    UndoStack -- see app/controllers/undo_stack.py."""
+
+    def _entries(self):
+        return [FirmwareEntry(file_path="/tmp/firmware.bin", address="0x10000")]
+
+    def test_fresh_controller_cannot_undo_or_redo(self, controller):
+        assert not controller.can_undo()
+        assert not controller.can_redo()
+
+    def test_apply_to_selected_is_undoable(self, controller):
+        a = controller.add_device("A")
+        controller.apply_to_selected([a.id], "baud_rate", 921600)
+        assert controller.get_device(a.id).baud_rate == 921600
+        assert controller.can_undo()
+        controller.undo()
+        assert controller.get_device(a.id).baud_rate != 921600
+
+    def test_apply_to_all_is_undoable(self, controller):
+        a = controller.add_device("A")
+        b = controller.add_device("B")
+        controller.apply_to_all("baud_rate", 460800)
+        controller.undo()
+        assert controller.get_device(a.id).baud_rate != 460800
+        assert controller.get_device(b.id).baud_rate != 460800
+
+    def test_apply_to_selected_with_only_unknown_ids_does_not_push_undo(self, controller):
+        controller.add_device("A")
+        # Neither an unknown device id nor an unknown field ever actually
+        # touches a device, so no *additional* undo entry should be
+        # recorded beyond the one add_device() itself already pushed.
+        before = controller.undo_description()
+        controller.apply_to_selected(["ghost-id"], "baud_rate", 1)
+        assert controller.undo_description() == before
+
+    def test_add_tag_to_devices_is_undoable(self, controller):
+        a = controller.add_device("A")
+        controller.add_tag_to_devices([a.id], "Batch 7")
+        assert "Batch 7" in a.tags
+        controller.undo()
+        assert "Batch 7" not in controller.get_device(a.id).tags
+
+    def test_add_tag_blank_does_not_push_undo(self, controller):
+        controller.add_device("A")
+        before = controller.undo_description()
+        controller.add_tag_to_devices([controller.devices()[0].id], "   ")
+        assert controller.undo_description() == before
+
+    def test_apply_firmware_to_devices_is_undoable(self, controller):
+        a = controller.add_device("A")
+        controller.apply_firmware_to_devices([a.id], self._entries())
+        assert len(controller.get_device(a.id).firmware) == 1
+        controller.undo()
+        assert controller.get_device(a.id).firmware == []
+
+    def test_remove_devices_is_undoable(self, controller):
+        a = controller.add_device("A")
+        b = controller.add_device("B")
+        removed = controller.remove_devices([a.id, b.id])
+        assert removed == 2
+        assert controller.devices() == []
+        controller.undo()
+        assert {d.name for d in controller.devices()} == {"A", "B"}
+
+    def test_remove_devices_with_no_matches_does_not_push_undo(self, controller):
+        controller.remove_devices(["ghost-id"])
+        assert not controller.can_undo()
+
+    def test_import_from_csv_is_undoable(self, controller, tmp_path):
+        csv_path = tmp_path / "devices.csv"
+        csv_path.write_text("name,com_port\nDevice A,COM3\n", encoding="utf-8")
+        controller.import_from_csv(str(csv_path))
+        assert len(controller.devices()) == 1
+        controller.undo()
+        assert controller.devices() == []
+
+    def test_undo_then_redo_restores_mutation(self, controller):
+        a = controller.add_device("A")
+        controller.apply_to_selected([a.id], "baud_rate", 921600)
+        controller.undo()
+        assert controller.get_device(a.id).baud_rate != 921600
+        controller.redo()
+        assert controller.get_device(a.id).baud_rate == 921600
+
+    def test_new_mutation_after_undo_clears_redo(self, controller):
+        a = controller.add_device("A")
+        controller.apply_to_selected([a.id], "baud_rate", 921600)
+        controller.undo()
+        assert controller.can_redo()
+        controller.apply_to_selected([a.id], "baud_rate", 460800)
+        assert not controller.can_redo()
+
+    def test_undo_emits_undo_stack_changed_and_devices_reset(self, qtbot, controller):
+        a = controller.add_device("A")
+        controller.apply_to_selected([a.id], "baud_rate", 921600)
+        with qtbot.waitSignals([controller.undo_stack_changed, controller.devices_reset], timeout=1000):
+            controller.undo()
+
+    def test_undo_with_nothing_to_undo_returns_false(self, controller):
+        assert controller.undo() is False
+
+    def test_redo_with_nothing_to_redo_returns_false(self, controller):
+        assert controller.redo() is False
+
+    def test_set_project_clears_undo_history(self, controller):
+        a = controller.add_device("A")
+        controller.apply_to_selected([a.id], "baud_rate", 921600)
+        assert controller.can_undo()
+        controller.set_project(ProjectModel())
+        assert not controller.can_undo()
+        assert not controller.can_redo()
+
+    def test_undo_description_reflects_last_operation(self, controller):
+        a = controller.add_device("A")
+        controller.apply_to_selected([a.id], "baud_rate", 921600)
+        assert "Batch Edit" in controller.undo_description()
+
+    def test_busy_device_mutation_that_changes_nothing_does_not_push_undo(self, controller):
+        a = controller.add_device("A")
+        controller.set_flash_controller(_FakeFlashController({a.id}))
+        before = controller.undo_description()
+        controller.apply_to_selected([a.id], "baud_rate", 921600)
+        assert a.baud_rate != 921600
+        assert controller.undo_description() == before
+
+    def test_refresh_undo_stack_depth_applies_setting_live(self, controller):
+        from app.utilities.app_settings import get_settings
+        from app.utilities.constants import SETTINGS_KEY_UNDO_STACK_DEPTH
+
+        for i in range(5):
+            a = controller.add_device(f"A{i}")
+            controller.apply_to_selected([a.id], "baud_rate", 921600 + i)
+
+        get_settings().setValue(SETTINGS_KEY_UNDO_STACK_DEPTH, 2)
+        controller.refresh_undo_stack_depth()
+
+        count = 0
+        while controller.can_undo():
+            controller.undo()
+            count += 1
+        assert count == 2
+
+
+class TestPreviewHelpers:
+    """Read-only diff/preview helpers backing the Batch Edit and Assign
+    Firmware Set confirmation dialogs -- see ROADMAP.md's "Diff / preview
+    step" entry. These must never mutate project state."""
+
+    def test_preview_field_change_reports_only_devices_that_would_change(self, controller):
+        a = controller.add_device("A")
+        a.baud_rate = 115200
+        b = controller.add_device("B")
+        b.baud_rate = 921600
+        changes = controller.preview_field_change([a.id, b.id], "baud_rate", 921600)
+        assert [c[0] for c in changes] == [a.id]
+        assert changes[0][1] == "A"
+        assert changes[0][2] == "115200"
+        assert changes[0][3] == "921600"
+
+    def test_preview_field_change_does_not_mutate(self, controller):
+        a = controller.add_device("A")
+        a.baud_rate = 115200
+        controller.preview_field_change([a.id], "baud_rate", 921600)
+        assert a.baud_rate == 115200
+
+    def test_preview_field_change_skips_busy_devices(self, controller):
+        a = controller.add_device("A")
+        a.baud_rate = 115200
+        controller.set_flash_controller(_FakeFlashController({a.id}))
+        changes = controller.preview_field_change([a.id], "baud_rate", 921600)
+        assert changes == []
+
+    def test_preview_field_change_skips_unknown_field(self, controller):
+        a = controller.add_device("A")
+        changes = controller.preview_field_change([a.id], "not_a_real_field", 1)
+        assert changes == []
+
+    def test_preview_tag_addition_reports_new_tag(self, controller):
+        a = controller.add_device("A")
+        changes = controller.preview_tag_addition([a.id], "Batch 7")
+        assert changes[0][2] == "(none)"
+        assert changes[0][3] == "Batch 7"
+
+    def test_preview_tag_addition_skips_devices_that_already_have_the_tag(self, controller):
+        a = controller.add_device("A")
+        a.tags = ["Batch 7"]
+        changes = controller.preview_tag_addition([a.id], "Batch 7")
+        assert changes == []
+
+    def test_preview_tag_addition_blank_tag_returns_empty(self, controller):
+        a = controller.add_device("A")
+        assert controller.preview_tag_addition([a.id], "   ") == []
+
+    def test_preview_firmware_assignment_reports_changed_devices(self, controller):
+        a = controller.add_device("A")
+        entries = [FirmwareEntry(file_path="/tmp/firmware.bin", address="0x10000")]
+        changes = controller.preview_firmware_assignment([a.id], entries)
+        assert changes[0][2] == "(none)"
+        assert "firmware.bin@0x10000" in changes[0][3]
+
+    def test_preview_firmware_assignment_skips_identical_assignment(self, controller):
+        a = controller.add_device("A")
+        entries = [FirmwareEntry(file_path="/tmp/firmware.bin", address="0x10000")]
+        controller.apply_firmware_to_devices([a.id], entries)
+        changes = controller.preview_firmware_assignment([a.id], entries)
+        assert changes == []
+
+    def test_preview_firmware_assignment_skips_busy_devices(self, controller):
+        a = controller.add_device("A")
+        controller.set_flash_controller(_FakeFlashController({a.id}))
+        entries = [FirmwareEntry(file_path="/tmp/firmware.bin", address="0x10000")]
+        assert controller.preview_firmware_assignment([a.id], entries) == []
+
+
+class TestImportFromZipBundle:
+    def _bundle(self, tmp_path):
+        import zipfile
+
+        zip_path = tmp_path / "bundle.zip"
+        with zipfile.ZipFile(zip_path, "w") as archive:
+            archive.writestr("manifest.csv", "device_name,firmware_file,address\nBench 1,firmware.bin,0x10000\n")
+            archive.writestr("firmware.bin", b"\x00" * 64)
+        return str(zip_path)
+
+    def test_import_adds_device_with_firmware_and_emits_signal(self, qtbot, controller, tmp_path):
+        bundle = self._bundle(tmp_path)
+        with qtbot.waitSignal(controller.device_added, timeout=1000):
+            result = controller.import_from_zip_bundle(bundle)
+        assert result.imported_count == 1
+        device = controller.devices()[0]
+        assert device.name == "Bench 1"
+        assert len(device.firmware) == 1
+
+    def test_import_is_undoable(self, controller, tmp_path):
+        bundle = self._bundle(tmp_path)
+        controller.import_from_zip_bundle(bundle)
+        assert len(controller.devices()) == 1
+        controller.undo()
+        assert controller.devices() == []
+
+    def test_import_error_propagates_as_exception(self, controller, tmp_path):
+        from app.project_manager.zip_manifest_import import ZipManifestImportError
+
+        with pytest.raises(ZipManifestImportError):
+            controller.import_from_zip_bundle(str(tmp_path / "does_not_exist.zip"))
+
+
+class TestPushDeviceEditUndo:
+    """DeviceController.push_device_edit_undo -- the mechanism that makes
+    single-device edits made directly by the Device Settings/Firmware/
+    Security panels (which mutate their DeviceConfig in place) undoable,
+    even though there's no DeviceController method call to wrap for
+    those panels the way apply_to_selected() is wrapped."""
+
+    def test_field_change_is_pushed_and_undoable(self, controller):
+        a = controller.add_device("A")
+        before = copy.deepcopy(a)
+        a.name = "Renamed"
+
+        pushed = controller.push_device_edit_undo(a.id, before, "Edit device settings")
+
+        assert pushed is True
+        assert controller.undo_description() == "Edit device settings"
+        controller.undo()
+        assert controller.get_device(a.id).name == "A"
+
+    def test_no_actual_change_does_not_push(self, controller):
+        a = controller.add_device("A")
+        before = copy.deepcopy(a)
+        # Nothing about `a` actually changed.
+        baseline_description = controller.undo_description()
+
+        pushed = controller.push_device_edit_undo(a.id, before, "Edit device settings")
+
+        assert pushed is False
+        assert controller.undo_description() == baseline_description
+
+    def test_unknown_device_id_does_not_push(self, controller):
+        a = controller.add_device("A")
+        before = copy.deepcopy(a)
+        pushed = controller.push_device_edit_undo("ghost-id", before, "Edit device settings")
+        assert pushed is False
+
+    def test_firmware_addition_is_undoable(self, controller):
+        a = controller.add_device("A")
+        before = copy.deepcopy(a)
+        a.add_firmware(FirmwareEntry(file_path="/tmp/firmware.bin", address="0x10000"))
+
+        controller.push_device_edit_undo(a.id, before, "Edit firmware")
+
+        assert len(controller.get_device(a.id).firmware) == 1
+        controller.undo()
+        assert controller.get_device(a.id).firmware == []
+
+    def test_redo_restores_the_edit(self, controller):
+        a = controller.add_device("A")
+        before = copy.deepcopy(a)
+        a.name = "Renamed"
+        controller.push_device_edit_undo(a.id, before, "Edit device settings")
+
+        controller.undo()
+        controller.redo()
+
+        assert controller.get_device(a.id).name == "Renamed"
+
+
+class TestAddRemoveDuplicateAreUndoable:
+    """add_device/remove_device/duplicate_device must each push their own
+    undo entry -- previously only the four *bulk* operations did."""
+
+    def test_add_device_is_undoable(self, controller):
+        controller.add_device("A")
+        assert controller.can_undo()
+        controller.undo()
+        assert controller.devices() == []
+
+    def test_remove_device_single_is_undoable(self, controller):
+        a = controller.add_device("A")
+        controller.remove_device(a.id)
+        assert controller.devices() == []
+        controller.undo()
+        assert len(controller.devices()) == 1
+        assert controller.devices()[0].name == "A"
+
+    def test_remove_device_unknown_id_does_not_push(self, controller):
+        controller.add_device("A")
+        baseline = controller.undo_description()
+        controller.remove_device("ghost-id")
+        assert controller.undo_description() == baseline
+
+    def test_duplicate_device_is_undoable(self, controller):
+        controller.add_device("A")
+        controller.duplicate_device(controller.devices()[0].id)
+        assert len(controller.devices()) == 2
+        controller.undo()
+        assert len(controller.devices()) == 1
+
+    def test_duplicate_unknown_device_does_not_push(self, controller):
+        controller.add_device("A")
+        baseline = controller.undo_description()
+        result = controller.duplicate_device("ghost-id")
+        assert result is None
+        assert controller.undo_description() == baseline
+
+    def test_add_then_remove_then_undo_twice_restores_original_state(self, controller):
+        a = controller.add_device("A")
+        controller.remove_device(a.id)
+        assert controller.devices() == []
+        controller.undo()  # undoes the remove
+        assert len(controller.devices()) == 1
+        controller.undo()  # undoes the add
+        assert controller.devices() == []

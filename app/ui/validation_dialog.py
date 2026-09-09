@@ -19,11 +19,19 @@ from app.ui.widgets import fit_table_columns, make_scrollable, prepare_table_for
 
 
 class ValidationReportDialog(QDialog):
-    def __init__(self, report: ValidationReport, parent=None) -> None:
+    def __init__(self, report: ValidationReport, parent=None, dry_run: bool | None = None) -> None:
+        """`dry_run` controls the dialog's framing (title/buttons). If not
+        given explicitly it's read off `report.dry_run` -- ValidationReport
+        already carries that flag when it came from a
+        validate_devices(..., dry_run=True) call (see ROADMAP.md's
+        "Dry-run / pre-flight simulation mode" entry). A dry run is purely
+        informational (it isn't gating an Upload click), so it always shows
+        a single Close button regardless of whether errors were found."""
         super().__init__(parent)
-        self.setWindowTitle("Pre-Upload Validation Report")
-        self.resize(650, 400)
         self.report = report
+        self.dry_run = report.dry_run if dry_run is None else dry_run
+        self.setWindowTitle("Bench Validation (Dry Run)" if self.dry_run else "Pre-Upload Validation Report")
+        self.resize(650, 400)
 
         outer_layout = QVBoxLayout(self)
 
@@ -59,7 +67,18 @@ class ValidationReportDialog(QDialog):
         table.setMinimumHeight(120)
         layout.addWidget(table, 1)
 
-        if report.has_errors:
+        if self.dry_run:
+            note = QLabel(
+                "Dry run: live port availability was not checked (no hardware needs to be "
+                "connected). Every other check ran normally, exactly as it would before a "
+                "real upload."
+            )
+            note.setWordWrap(True)
+            layout.addWidget(note)
+            buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+            buttons.rejected.connect(self.reject)
+            buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.reject)
+        elif report.has_errors:
             note = QLabel("Errors must be resolved before uploading. This upload has been blocked.")
             note.setStyleSheet("color: #e03131; font-weight: 600;")
             note.setWordWrap(True)

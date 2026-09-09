@@ -266,3 +266,67 @@ class TestFullyValidDevice:
         assert report.issues == []
         assert not report.has_errors
         assert not report.has_warnings
+
+
+class TestDryRun:
+    """Dry-run / pre-flight simulation mode (Tools -> Validate Bench (Dry
+    Run)...) -- see ROADMAP.md's corresponding entry. dry_run=True must
+    skip only the live "is this port currently connected" check; every
+    other check still runs exactly as it would for a real upload."""
+
+    def test_dry_run_ignores_disconnected_port(self):
+        device = _device(com_port="COM9", firmware=[_firmware("0x1000")])
+        report = validate_devices(
+            [device], connected_ports=set(), monitor_ports=set(), supported_chips=CHIPS, dry_run=True,
+        )
+        assert _errors_for(report, "Device") == []
+
+    def test_non_dry_run_still_flags_disconnected_port(self):
+        device = _device(com_port="COM9", firmware=[_firmware("0x1000")])
+        report = validate_devices(
+            [device], connected_ports=set(), monitor_ports=set(), supported_chips=CHIPS, dry_run=False,
+        )
+        assert any("not currently connected" in m.lower() or "not connected" in m.lower() for m in
+                    _errors_for(report, "Device")) or report.has_errors
+
+    def test_dry_run_report_carries_dry_run_flag(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        report = validate_devices([device], monitor_ports=set(), supported_chips=CHIPS, dry_run=True)
+        assert report.dry_run is True
+
+    def test_non_dry_run_report_flag_defaults_false(self):
+        device = _device(firmware=[_firmware("0x1000")])
+        report = validate_devices(
+            [device], connected_ports={"COM3"}, monitor_ports=set(), supported_chips=CHIPS,
+        )
+        assert report.dry_run is False
+
+    def test_dry_run_still_catches_duplicate_ports(self):
+        a = _device(name="A", com_port="COM3", firmware=[_firmware("0x1000")])
+        b = _device(name="B", com_port="COM3", firmware=[_firmware("0x1000")])
+        report = validate_devices([a, b], monitor_ports=set(), supported_chips=CHIPS, dry_run=True)
+        assert any("multiple devices" in m for m in _errors_for(report, "A"))
+
+    def test_dry_run_still_catches_missing_firmware_file(self):
+        device = _device(firmware=[_firmware("0x1000", missing=True)])
+        report = validate_devices([device], monitor_ports=set(), supported_chips=CHIPS, dry_run=True)
+        assert report.has_errors
+
+    def test_dry_run_still_catches_unsupported_chip(self):
+        device = _device(chip_type="not_a_real_chip", firmware=[_firmware("0x1000")])
+        report = validate_devices([device], monitor_ports=set(), supported_chips=CHIPS, dry_run=True)
+        assert report.has_errors
+
+    def test_dry_run_with_no_configured_port_is_still_an_error(self):
+        # dry_run only skips the "is this port CURRENTLY connected" check
+        # -- a device with no port configured at all is still invalid.
+        device = _device(com_port="", firmware=[_firmware("0x1000")])
+        report = validate_devices([device], monitor_ports=set(), supported_chips=CHIPS, dry_run=True)
+        assert any("No port selected" in m for m in _errors_for(report, "Device"))
+
+    def test_dry_run_still_respects_monitor_port_conflict(self):
+        device = _device(com_port="COM3", firmware=[_firmware("0x1000")])
+        report = validate_devices(
+            [device], monitor_ports={"COM3"}, supported_chips=CHIPS, dry_run=True,
+        )
+        assert report.has_errors
